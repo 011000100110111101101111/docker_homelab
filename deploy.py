@@ -11,12 +11,11 @@ import shutil
 import subprocess
 import sys
 
-# ── Venv bootstrap ───────────────────────────────────────────────────────────
-# On first run, creates a .venv in the project directory, installs dependencies,
-# and re-executes itself inside the venv — fully transparent to the user.
+# ── Venv bootstrap ────────────────────────────────────────────────────────────
+# Creates .venv on first run, installs deps, re-execs itself inside it.
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-VENV_DIR   = os.path.join(SCRIPT_DIR, ".venv")
+SCRIPT_DIR  = os.path.dirname(os.path.abspath(__file__))
+VENV_DIR    = os.path.join(SCRIPT_DIR, ".venv")
 VENV_PYTHON = os.path.join(VENV_DIR, "bin", "python") if os.name != "nt" \
               else os.path.join(VENV_DIR, "Scripts", "python.exe")
 
@@ -30,12 +29,10 @@ if not in_venv():
     subprocess.check_call([VENV_PYTHON, "-m", "pip", "install", "questionary", "-q"])
     os.execv(VENV_PYTHON, [VENV_PYTHON] + sys.argv)
 
-# ── Dependencies (guaranteed available inside venv) ──────────────────────────
-
 import questionary
 from questionary import Style, Choice, Separator
 
-# ── Catppuccin Mocha style ───────────────────────────────────────────────────
+# ── Catppuccin Mocha ──────────────────────────────────────────────────────────
 
 MOCHA = Style([
     ("qmark",       "fg:#cba6f7 bold"),
@@ -60,41 +57,83 @@ RED     = "\033[38;2;243;139;168m"
 BLUE    = "\033[38;2;137;180;250m"
 SURFACE = "\033[38;2;69;71;90m"
 
-def c(color, text): return f"{color}{text}{RESET}"
+# ── Timezone list ─────────────────────────────────────────────────────────────
 
-# ── .env variable definitions ─────────────────────────────────────────────────
-#
-# Each section has a name, description, and list of variables.
-# required=True  → shown in guided setup
-# required=False → shown but skippable / optional
-# password=True  → can be bulk-generated
-# secret=True    → masked input
+TIMEZONES = [
+    # Americas
+    "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
+    "America/Phoenix", "America/Anchorage", "America/Honolulu", "America/Toronto",
+    "America/Vancouver", "America/Edmonton", "America/Winnipeg", "America/Halifax",
+    "America/St_Johns", "America/Mexico_City", "America/Sao_Paulo", "America/Buenos_Aires",
+    "America/Bogota", "America/Lima", "America/Santiago", "America/Caracas",
+    # Europe
+    "Europe/London", "Europe/Dublin", "Europe/Lisbon", "Europe/Paris", "Europe/Berlin",
+    "Europe/Madrid", "Europe/Rome", "Europe/Amsterdam", "Europe/Brussels", "Europe/Zurich",
+    "Europe/Stockholm", "Europe/Oslo", "Europe/Copenhagen", "Europe/Helsinki",
+    "Europe/Warsaw", "Europe/Prague", "Europe/Vienna", "Europe/Budapest",
+    "Europe/Bucharest", "Europe/Athens", "Europe/Istanbul", "Europe/Moscow",
+    # Asia / Pacific
+    "Asia/Dubai", "Asia/Karachi", "Asia/Kolkata", "Asia/Dhaka", "Asia/Bangkok",
+    "Asia/Singapore", "Asia/Kuala_Lumpur", "Asia/Hong_Kong", "Asia/Shanghai",
+    "Asia/Tokyo", "Asia/Seoul", "Asia/Taipei",
+    "Australia/Sydney", "Australia/Melbourne", "Australia/Brisbane",
+    "Australia/Adelaide", "Australia/Perth", "Pacific/Auckland", "Pacific/Fiji",
+    # Africa / Other
+    "Africa/Cairo", "Africa/Johannesburg", "Africa/Lagos", "Africa/Nairobi",
+    "UTC",
+]
+
+# ── NAS device presets ────────────────────────────────────────────────────────
+
+NAS_DEVICES = {
+    "synology": {
+        "name":    "Synology DSM",
+        "hint":    "Shared folders live under /volume1/ (or /volume2/, etc.)",
+        "example": "/volume1/homelab",
+    },
+    "qnap": {
+        "name":    "QNAP QTS / QuTS Hero",
+        "hint":    "Shared folders live under /share/",
+        "example": "/share/homelab",
+    },
+    "truenas": {
+        "name":    "TrueNAS / FreeNAS",
+        "hint":    "Datasets are under /mnt/<pool>/",
+        "example": "/mnt/tank/homelab",
+    },
+    "unifi": {
+        "name":    "Unifi Dream Machine (NFS)",
+        "hint":    "NFS shares: /var/nfs/shared/<share>  →  mount to a local path on this machine",
+        "example": "/var/nfs/shared/homelab",
+    },
+    "nfs": {
+        "name":    "Generic NFS mount",
+        "hint":    "Use the local mount point on this machine (e.g. /mnt/nas)",
+        "example": "/mnt/nas/homelab",
+    },
+    "smb": {
+        "name":    "SMB / Windows share",
+        "hint":    "Use the local path this machine maps the share to (e.g. /mnt/share or Z:\\)",
+        "example": "/mnt/nas/homelab",
+    },
+    "local": {
+        "name":    "Local directory (no NAS)",
+        "hint":    "Data stays on this machine; subfolders created under ./data/ automatically",
+        "example": "./data",
+    },
+}
+
+SUBFOLDER_KEYS = {
+    "NAS_MEDIA_PATH":     "media",
+    "NAS_MUSIC_PATH":     "music",
+    "NAS_BOOKS_PATH":     "books",
+    "NAS_PHOTOS_PATH":    "photos",
+    "NAS_DOCUMENTS_PATH": "documents",
+}
+
+# ── Generic env sections (handled by the standard loop) ───────────────────────
 
 ENV_SECTIONS = [
-    {
-        "name": "General",
-        "desc": "Basic system settings",
-        "vars": [
-            {"key": "TZ",     "desc": "Timezone",                               "default": "America/New_York"},
-            {"key": "PUID",   "desc": "User ID for file permissions",            "default": "1000"},
-            {"key": "PGID",   "desc": "Group ID for file permissions",           "default": "1000"},
-            {"key": "DOMAIN", "desc": "Base domain (e.g. homelab.local)",        "default": "localhost"},
-        ],
-    },
-    {
-        "name": "NAS / Storage",
-        "desc": "Network storage — skip if you have no NAS",
-        "optional": True,
-        "vars": [
-            {"key": "NAS_IP",            "desc": "NAS IP address",           "default": "192.168.1.100"},
-            {"key": "NAS_MEDIA_PATH",    "desc": "Path to media on NAS",     "default": "/volume1/media"},
-            {"key": "NAS_MUSIC_PATH",    "desc": "Path to music on NAS",     "default": "/volume1/music"},
-            {"key": "NAS_BOOKS_PATH",    "desc": "Path to books on NAS",     "default": "/volume1/books"},
-            {"key": "NAS_DOWNLOADS_PATH","desc": "Path to downloads on NAS", "default": "/volume1/downloads"},
-            {"key": "NAS_PHOTOS_PATH",   "desc": "Path to photos on NAS",    "default": "/volume1/photos"},
-            {"key": "NAS_DOCUMENTS_PATH","desc": "Path to documents on NAS", "default": "/volume1/documents"},
-        ],
-    },
     {
         "name": "AdGuard Home",
         "desc": "DNS & ad blocking credentials",
@@ -108,32 +147,32 @@ ENV_SECTIONS = [
         "desc": "Database passwords for all services",
         "bulk_password": True,
         "vars": [
-            {"key": "MEALIE_DB_PASSWORD",    "desc": "Mealie database password",       "default": "changeme", "password": True},
-            {"key": "MEALIE_SECRET_KEY",     "desc": "Mealie secret key",              "default": "changeme", "password": True},
-            {"key": "PAPERLESS_DB_PASSWORD", "desc": "Paperless database password",    "default": "changeme", "password": True},
-            {"key": "PAPERLESS_SECRET_KEY",  "desc": "Paperless secret key",           "default": "changeme", "password": True},
-            {"key": "PAPERLESS_ADMIN_USER",  "desc": "Paperless admin username",       "default": "admin"},
-            {"key": "PAPERLESS_ADMIN_PASSWORD","desc": "Paperless admin password",     "default": "changeme", "password": True},
-            {"key": "IMMICH_DB_PASSWORD",    "desc": "Immich database password",       "default": "changeme", "password": True},
-            {"key": "IMMICH_DB_USERNAME",    "desc": "Immich database username",       "default": "immich"},
-            {"key": "IMMICH_DB_NAME",        "desc": "Immich database name",           "default": "immich"},
-            {"key": "N8N_ENCRYPTION_KEY",    "desc": "n8n encryption key",             "default": "changeme", "password": True},
-            {"key": "KOEL_DB_PASSWORD",      "desc": "Koel database password",         "default": "changeme", "password": True},
-            {"key": "METABASE_DB_PASSWORD",  "desc": "Metabase database password",     "default": "changeme", "password": True},
-            {"key": "PASTEFY_DB_PASSWORD",   "desc": "Pastefy database password",      "default": "changeme", "password": True},
-            {"key": "NOCODB_DB_PASSWORD",    "desc": "NocoDB database password",       "default": "changeme", "password": True},
+            {"key": "MEALIE_DB_PASSWORD",      "desc": "Mealie database password",    "default": "changeme", "password": True},
+            {"key": "MEALIE_SECRET_KEY",        "desc": "Mealie secret key",           "default": "changeme", "password": True},
+            {"key": "PAPERLESS_DB_PASSWORD",    "desc": "Paperless database password", "default": "changeme", "password": True},
+            {"key": "PAPERLESS_SECRET_KEY",     "desc": "Paperless secret key",        "default": "changeme", "password": True},
+            {"key": "PAPERLESS_ADMIN_USER",     "desc": "Paperless admin username",    "default": "admin"},
+            {"key": "PAPERLESS_ADMIN_PASSWORD", "desc": "Paperless admin password",    "default": "changeme", "password": True},
+            {"key": "IMMICH_DB_PASSWORD",       "desc": "Immich database password",    "default": "changeme", "password": True},
+            {"key": "IMMICH_DB_USERNAME",       "desc": "Immich database username",    "default": "immich"},
+            {"key": "IMMICH_DB_NAME",           "desc": "Immich database name",        "default": "immich"},
+            {"key": "N8N_ENCRYPTION_KEY",       "desc": "n8n encryption key",          "default": "changeme", "password": True},
+            {"key": "KOEL_DB_PASSWORD",         "desc": "Koel database password",      "default": "changeme", "password": True},
+            {"key": "METABASE_DB_PASSWORD",     "desc": "Metabase database password",  "default": "changeme", "password": True},
+            {"key": "PASTEFY_DB_PASSWORD",      "desc": "Pastefy database password",   "default": "changeme", "password": True},
+            {"key": "NOCODB_DB_PASSWORD",       "desc": "NocoDB database password",    "default": "changeme", "password": True},
         ],
     },
     {
-        "name": "Homepage API Keys",
+        "name": "Setup Homepage API Keys",
         "desc": "Optional — fill in after services are running to enable dashboard widgets",
         "optional": True,
         "vars": [
-            {"key": "HOMEPAGE_VAR_JELLYFIN",        "desc": "Jellyfin API key",      "default": ""},
-            {"key": "HOMEPAGE_VAR_JELLYSEER",       "desc": "Jellyseer API key",     "default": ""},
-            {"key": "HOMEPAGE_VAR_ADGUARD_USERNAME","desc": "AdGuard username",      "default": "admin"},
-            {"key": "HOMEPAGE_VAR_ADGUARD_PASSWORD","desc": "AdGuard password",      "default": "changeme"},
-            {"key": "HOMEPAGE_VAR_PORTAINER_KEY",   "desc": "Portainer API key",     "default": ""},
+            {"key": "HOMEPAGE_VAR_JELLYFIN",        "desc": "Jellyfin API key",  "default": ""},
+            {"key": "HOMEPAGE_VAR_JELLYSEER",       "desc": "Jellyseer API key", "default": ""},
+            {"key": "HOMEPAGE_VAR_ADGUARD_USERNAME","desc": "AdGuard username",  "default": "admin"},
+            {"key": "HOMEPAGE_VAR_ADGUARD_PASSWORD","desc": "AdGuard password",  "default": "changeme"},
+            {"key": "HOMEPAGE_VAR_PORTAINER_KEY",   "desc": "Portainer API key", "default": ""},
         ],
     },
 ]
@@ -147,9 +186,7 @@ CORE = [
 
 CATEGORIES = [
     {
-        "id": "media",
-        "name": "Media",
-        "desc": "Streaming and music",
+        "id": "media", "name": "Media", "desc": "Streaming and music",
         "services": [
             {"id": "jellyfin",  "name": "Jellyfin",  "desc": "Media server"},
             {"id": "jellyseer", "name": "Jellyseer", "desc": "Media requests", "requires": ["jellyfin"]},
@@ -157,17 +194,13 @@ CATEGORIES = [
         ],
     },
     {
-        "id": "photos",
-        "name": "Photos",
-        "desc": "Photo backup and management",
+        "id": "photos", "name": "Photos", "desc": "Photo backup and management",
         "services": [
             {"id": "immich", "name": "Immich", "desc": "Photo management & ML search"},
         ],
     },
     {
-        "id": "productivity",
-        "name": "Productivity",
-        "desc": "Recipes, documents, and automation",
+        "id": "productivity", "name": "Productivity", "desc": "Recipes, documents, and automation",
         "services": [
             {"id": "mealie",        "name": "Mealie",        "desc": "Recipe manager"},
             {"id": "paperless-ngx", "name": "Paperless-NGX", "desc": "Document management"},
@@ -175,27 +208,21 @@ CATEGORIES = [
         ],
     },
     {
-        "id": "dashboard",
-        "name": "Dashboards",
-        "desc": "Service overview and content feeds",
+        "id": "dashboard", "name": "Dashboards", "desc": "Service overview and content feeds",
         "services": [
             {"id": "homepage", "name": "Homepage", "desc": "Service dashboard"},
             {"id": "glance",   "name": "Glance",   "desc": "News & content dashboard"},
         ],
     },
     {
-        "id": "books",
-        "name": "Books",
-        "desc": "Reading and book management",
+        "id": "books", "name": "Books", "desc": "Reading and book management",
         "services": [
             {"id": "kavita",      "name": "Kavita",      "desc": "Book reader"},
             {"id": "calibre-web", "name": "Calibre Web", "desc": "Book processing & library"},
         ],
     },
     {
-        "id": "dev",
-        "name": "Dev Tools",
-        "desc": "Databases, analytics, and utilities",
+        "id": "dev", "name": "Dev Tools", "desc": "Databases, analytics, and utilities",
         "services": [
             {"id": "nocodb",    "name": "NocoDB",    "desc": "No-code database UI"},
             {"id": "metabase",  "name": "Metabase",  "desc": "Analytics & BI"},
@@ -205,14 +232,12 @@ CATEGORIES = [
     },
 ]
 
-# ── .env helpers ─────────────────────────────────────────────────────────────
+# ── .env helpers ──────────────────────────────────────────────────────────────
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-ENV_FILE     = os.path.join(SCRIPT_DIR, ".env")
-ENV_EXAMPLE  = os.path.join(SCRIPT_DIR, ".env.example")
+ENV_FILE    = os.path.join(SCRIPT_DIR, ".env")
+ENV_EXAMPLE = os.path.join(SCRIPT_DIR, ".env.example")
 
 def load_env():
-    """Parse .env into a dict."""
     values = {}
     if not os.path.exists(ENV_FILE):
         return values
@@ -225,47 +250,253 @@ def load_env():
     return values
 
 def save_env(values):
-    """Write values dict back to .env, preserving comments from .env.example."""
     if not os.path.exists(ENV_EXAMPLE):
-        # Fallback: plain write
         with open(ENV_FILE, "w") as f:
             for k, v in values.items():
                 f.write(f"{k}={v}\n")
         return
-
     with open(ENV_EXAMPLE) as f:
         template = f.read()
-
     def replacer(match):
         key = match.group(1)
         return f"{key}={values.get(key, match.group(2))}"
-
     result = re.sub(r"^([A-Z0-9_]+)=(.*)$", replacer, template, flags=re.MULTILINE)
-
     with open(ENV_FILE, "w") as f:
         f.write(result)
 
 def gen_password(length=32):
-    """Generate a URL-safe random password."""
     return secrets.token_urlsafe(length)
 
-# ── Setup wizard ──────────────────────────────────────────────────────────────
+# ── Wizard helpers ────────────────────────────────────────────────────────────
+
+def section_header(title, desc=None):
+    pad = max(1, 38 - len(title))
+    print(f"\n  {BLUE}── {title} {'─' * pad}{RESET}")
+    if desc:
+        print(f"  {SUBTEXT}{desc}{RESET}")
+    print()
+
+def detect_local_timezone():
+    """Detect system timezone without third-party libraries."""
+    try:
+        link = os.path.realpath("/etc/localtime")
+        for marker in ["/zoneinfo/", "\\zoneinfo\\"]:
+            if marker in link:
+                tz = link.split(marker)[-1]
+                if tz in TIMEZONES:
+                    return tz
+    except Exception:
+        pass
+    return "America/New_York"
+
+# ── Wizard: General ───────────────────────────────────────────────────────────
+
+def wizard_general(existing):
+    section_header("General", "Basic system settings")
+
+    detected_tz = detect_local_timezone()
+    default_tz  = existing.get("TZ", detected_tz)
+
+    tz = questionary.autocomplete(
+        "  Timezone:",
+        choices=TIMEZONES,
+        default=default_tz,
+        style=MOCHA,
+        match_middle=True,
+    ).ask()
+
+    puid = questionary.text(
+        f"  User ID for file permissions [{existing.get('PUID', '1000')}]:",
+        default=existing.get("PUID", "1000"),
+        style=MOCHA,
+    ).ask()
+
+    pgid = questionary.text(
+        f"  Group ID for file permissions [{existing.get('PGID', '1000')}]:",
+        default=existing.get("PGID", "1000"),
+        style=MOCHA,
+    ).ask()
+
+    return {
+        "TZ":   tz   or default_tz,
+        "PUID": puid or "1000",
+        "PGID": pgid or "1000",
+    }
+
+# ── Wizard: Domain ────────────────────────────────────────────────────────────
+
+def wizard_domain(existing):
+    section_header("Base Domain")
+
+    print(f"  {SUBTEXT}Nginx Proxy Manager uses your domain to route subdomains to services.{RESET}")
+    print(f"  {SUBTEXT}Example:  jellyfin.{{your-domain}}  →  Jellyfin{RESET}")
+    print(f"  {SUBTEXT}          immich.{{your-domain}}    →  Immich{RESET}\n")
+
+    access = questionary.select(
+        "  How will you access your services?",
+        choices=[
+            Choice("Local only (localhost)   — this machine only, no extra setup needed",   value="local"),
+            Choice("Local network domain     — across your home network via local DNS",      value="lan"),
+            Choice("Public domain            — accessible from anywhere on the internet",    value="public"),
+        ],
+        style=MOCHA,
+    ).ask()
+
+    if access is None:
+        return existing.get("DOMAIN", "localhost")
+
+    if access == "local":
+        print(f"\n  {GREEN}✓ No extra setup needed.{RESET}")
+        print(f"  {SUBTEXT}Access services directly at http://localhost:<port>{RESET}\n")
+        return "localhost"
+
+    elif access == "lan":
+        print(f"\n  {BLUE}What you'll need:{RESET}")
+        print(f"  {SUBTEXT}  1. A local domain name  (e.g. homelab.local){RESET}")
+        print(f"  {SUBTEXT}  2. A DNS entry pointing it to this machine's IP{RESET}")
+        print(f"  {SUBTEXT}     → AdGuard Home (in this stack) can handle this:{RESET}")
+        print(f"  {SUBTEXT}       Settings → DNS rewrites → *.homelab.local → <your-IP>{RESET}\n")
+        domain = questionary.text(
+            "  Local domain:",
+            default=existing.get("DOMAIN", "homelab.local"),
+            style=MOCHA,
+        ).ask()
+        return domain or "homelab.local"
+
+    else:  # public
+        print(f"\n  {BLUE}What you'll need:{RESET}")
+        print(f"  {SUBTEXT}  1. A registered domain  (Cloudflare, Namecheap, etc.){RESET}")
+        print(f"  {SUBTEXT}  2. An A record pointing to your public IP address{RESET}")
+        print(f"  {SUBTEXT}  3. Ports 80 and 443 forwarded to this machine{RESET}")
+        print(f"  {SUBTEXT}  4. SSL certificates — Nginx Proxy Manager handles this{RESET}")
+        print(f"  {SUBTEXT}     automatically via Let's Encrypt once configured.{RESET}\n")
+        domain = questionary.text(
+            "  Public domain:",
+            default=existing.get("DOMAIN", "example.com"),
+            style=MOCHA,
+        ).ask()
+        return domain or "example.com"
+
+# ── Wizard: NAS / Storage ─────────────────────────────────────────────────────
+
+def wizard_nas(existing):
+    section_header("NAS / Storage", "Where your media, photos, and documents live")
+    print(f"  {SUBTEXT}Services fall back to local Docker volumes if skipped.{RESET}\n")
+
+    setup = questionary.confirm(
+        "  Set up NAS/Network Storage?",
+        default=True,
+        style=MOCHA,
+    ).ask()
+
+    if not setup:
+        return {k: existing.get(k, "") for k in SUBFOLDER_KEYS}
+
+    # Device type
+    print()
+    device_key = questionary.select(
+        "  Storage type:",
+        choices=[
+            Choice(f"{v['name']}  — {v['hint']}", value=k)
+            for k, v in NAS_DEVICES.items()
+        ],
+        style=MOCHA,
+    ).ask()
+
+    if device_key is None:
+        return {}
+
+    device = NAS_DEVICES[device_key]
+
+    # NAS IP (not needed for local)
+    nas_ip = existing.get("NAS_IP", "192.168.1.100")
+    if device_key != "local":
+        print(f"\n  {SUBTEXT}Path format: {device['example']}{RESET}\n")
+        nas_ip = questionary.text(
+            f"  NAS IP address [{nas_ip}]:",
+            default=nas_ip,
+            style=MOCHA,
+        ).ask() or nas_ip
+
+    # Guess base path from existing config
+    existing_media = existing.get("NAS_MEDIA_PATH", "")
+    guessed_base = ""
+    if existing_media and existing_media not in ("/volume1/media", ""):
+        parts = existing_media.rstrip("/").split("/")
+        if len(parts) > 1:
+            guessed_base = "/".join(parts[:-1])
+    default_base = guessed_base or device["example"]
+
+    print()
+    base = questionary.text(
+        f"  Base storage path [{default_base}]:",
+        default=default_base,
+        style=MOCHA,
+    ).ask() or default_base
+
+    base = base.rstrip("/")
+
+    # Derive subfolder paths
+    paths = {key: f"{base}/{sub}" for key, sub in SUBFOLDER_KEYS.items()}
+
+    # Show derived paths
+    print(f"\n  {BLUE}Derived paths:{RESET}")
+    for key, path in paths.items():
+        label = SUBFOLDER_KEYS[key].capitalize()
+        print(f"    {SUBTEXT}{label:<12}{RESET} {TEXT}{path}{RESET}")
+
+    # Offer to customize individual paths
+    print()
+    customize = questionary.confirm(
+        "  Customize individual subfolder paths?",
+        default=False,
+        style=MOCHA,
+    ).ask()
+
+    if customize:
+        print()
+        for key in paths:
+            label = SUBFOLDER_KEYS[key].capitalize()
+            val = questionary.text(
+                f"  {label} [{paths[key]}]:",
+                default=paths[key],
+                style=MOCHA,
+            ).ask()
+            if val:
+                paths[key] = val
+
+    return {"NAS_IP": nas_ip, **paths}
+
+# ── Setup wizard (orchestrates all wizard sections) ───────────────────────────
 
 def run_setup(existing=None):
-    """Interactive guided .env configuration."""
     existing = existing or {}
     values = dict(existing)
 
     os.system("cls" if os.name == "nt" else "clear")
     print(f"\n  {MAUVE}◆ Homelab Setup Wizard{RESET}\n")
-    print(f"  {SUBTEXT}Press Enter to accept the default value shown in brackets.{RESET}")
-    print(f"  {SUBTEXT}Optional sections can be skipped entirely.{RESET}\n")
+    print(f"  {SUBTEXT}Press Enter to accept defaults. Ctrl+C to cancel at any time.{RESET}\n")
 
+    # Custom wizard sections
+    result = wizard_general(existing)
+    if result is None:
+        return None
+    values.update(result)
+
+    domain = wizard_domain(existing)
+    if domain is None:
+        return None
+    values["DOMAIN"] = domain
+
+    nas = wizard_nas(existing)
+    if nas is None:
+        return None
+    values.update(nas)
+
+    # Generic sections: AdGuard, Passwords, Homepage API keys
     for section in ENV_SECTIONS:
-        print(f"  {BLUE}── {section['name']} {SURFACE}{'─' * (38 - len(section['name']))}{RESET}")
-        print(f"  {SUBTEXT}{section['desc']}{RESET}\n")
+        section_header(section["name"], section.get("desc"))
 
-        # Optional section — offer to skip
         if section.get("optional"):
             skip = questionary.confirm(
                 f"  Skip {section['name']}?",
@@ -276,14 +507,13 @@ def run_setup(existing=None):
                 print()
                 continue
 
-        # Bulk password generation
         if section.get("bulk_password"):
             gen = questionary.select(
                 "  How do you want to set passwords?",
                 choices=[
-                    Choice(f"{c(TEXT, 'Generate random passwords')}  {SUBTEXT}recommended{RESET}", value="generate"),
-                    Choice(f"{c(TEXT, 'Use defaults')}               {SUBTEXT}all set to changeme{RESET}", value="defaults"),
-                    Choice(f"{c(TEXT, 'Set individually')}           {SUBTEXT}configure each one{RESET}", value="individual"),
+                    Choice("Generate random passwords  — recommended",         value="generate"),
+                    Choice("Use defaults               — all set to changeme", value="defaults"),
+                    Choice("Set individually           — configure each one",  value="individual"),
                 ],
                 style=MOCHA,
             ).ask()
@@ -293,34 +523,24 @@ def run_setup(existing=None):
                     if var.get("password"):
                         values[var["key"]] = gen_password()
                     else:
-                        current = existing.get(var["key"], var["default"])
-                        values[var["key"]] = current
+                        values[var["key"]] = existing.get(var["key"], var["default"])
                 print(f"  {GREEN}✓ Random passwords generated.{RESET}\n")
                 continue
             elif gen == "defaults":
                 for var in section["vars"]:
                     values[var["key"]] = var["default"]
-                print(f"  {YELLOW}⚠  Using default passwords — change these before exposing to the internet.{RESET}\n")
+                print(f"  {YELLOW}⚠  Using default passwords — change before exposing to the internet.{RESET}\n")
                 continue
-            # else fall through to individual
 
-        # Individual variable prompts
         for var in section["vars"]:
             current = existing.get(var["key"], var["default"])
-            display_default = "****" if (var.get("password") and current not in ("", "changeme")) else current
-            prompt = f"  {var['desc']}"
-            if display_default:
-                prompt += f" [{c(SUBTEXT, display_default)}]"
-
-            answer = questionary.text(
-                prompt,
-                default=current,
-                style=MOCHA,
-            ).ask()
-
+            display  = "****" if (var.get("password") and current not in ("", "changeme")) else current
+            prompt   = f"  {var['desc']}"
+            if display:
+                prompt += f" [{display}]"
+            answer = questionary.text(prompt, default=current, style=MOCHA).ask()
             if answer is None:
-                return None  # user ctrl-c'd
-
+                return None
             values[var["key"]] = answer if answer.strip() else current
 
         print()
@@ -328,7 +548,6 @@ def run_setup(existing=None):
     return values
 
 def setup_first_run():
-    """Handle first-run env setup — offer defaults or guided wizard."""
     os.system("cls" if os.name == "nt" else "clear")
     print(f"\n  {MAUVE}◆ Homelab Deploy Tool{RESET}")
     print(f"  {SURFACE}{'─' * 40}{RESET}\n")
@@ -338,8 +557,8 @@ def setup_first_run():
     choice = questionary.select(
         "How would you like to configure your environment?",
         choices=[
-            Choice(f"{c(TEXT, 'Use defaults')}       {SUBTEXT}spin up instantly with changeme passwords{RESET}", value="defaults"),
-            Choice(f"{c(TEXT, 'Guided setup')}       {SUBTEXT}walk through each setting interactively{RESET}", value="wizard"),
+            Choice("Use defaults       — spin up instantly with changeme passwords", value="defaults"),
+            Choice("Guided setup       — walk through each setting interactively",   value="wizard"),
         ],
         style=MOCHA,
     ).ask()
@@ -392,9 +611,8 @@ def print_summary(selected_ids, profiles):
     print(f"  {BLUE}◆ Deployment Summary{RESET}")
     print(f"  {SURFACE}{'─' * 40}{RESET}")
     print(f"  {SUBTEXT}Core:  {', '.join(s['name'] for s in CORE)}{RESET}")
-
     if selected_ids:
-        svcs = all_optional_services()
+        svcs  = all_optional_services()
         names = [s["name"] for s in svcs if s["id"] in selected_ids]
         line, lines = "", []
         for name in names:
@@ -409,20 +627,15 @@ def print_summary(selected_ids, profiles):
             print(f"         {SUBTEXT}{l}{RESET}")
     else:
         print(f"  {SUBTEXT}Apps:  (none){RESET}")
-
     print()
-    cmd = build_command(profiles)
-    print(f"  {MAUVE}Command:{RESET}  {TEXT}{cmd}{RESET}")
+    print(f"  {MAUVE}Command:{RESET}  {TEXT}{build_command(profiles)}{RESET}")
     print()
 
 # ── Service selection ─────────────────────────────────────────────────────────
 
 def select_by_category():
     choices = [
-        Choice(
-            f"{c(TEXT, cat['name'])}  {SUBTEXT}{cat['desc']}{RESET}",
-            value=cat["id"]
-        )
+        Choice(f"{cat['name']}  — {cat['desc']}", value=cat["id"])
         for cat in CATEGORIES
     ]
     selected_cats = questionary.checkbox(
@@ -431,63 +644,54 @@ def select_by_category():
         style=MOCHA,
         instruction="(space to select, enter to confirm)"
     ).ask()
-
     if selected_cats is None:
         return None, set()
-
     selected_ids = set()
     for cat in CATEGORIES:
         if cat["id"] in selected_cats:
             for svc in cat["services"]:
                 selected_ids.add(svc["id"])
-
     return selected_cats, selected_ids
 
 def select_individually():
     choices = []
     for cat in CATEGORIES:
-        choices.append(Separator(f"  {MAUVE}── {cat['name']} {SURFACE}{'─' * (28 - len(cat['name']))}{RESET}"))
+        choices.append(Separator(f"── {cat['name']}"))
         for svc in cat["services"]:
-            req_note = f"  {YELLOW}[requires: {', '.join(svc['requires'])}]{RESET}" if svc.get("requires") else ""
+            req_note = f"  [requires: {', '.join(svc['requires'])}]" if svc.get("requires") else ""
             choices.append(Choice(
-                f"{c(TEXT, svc['name'])}  {SUBTEXT}{svc['desc']}{RESET}{req_note}",
+                f"{svc['name']}  — {svc['desc']}{req_note}",
                 value=svc["id"]
             ))
-
     selected = questionary.checkbox(
         "Select services to deploy:",
         choices=choices,
         style=MOCHA,
         instruction="(space to select, enter to confirm)"
     ).ask()
-
     if selected is None:
         return None, set()
-
     selected_ids = set(selected)
-    resolved = resolve_dependencies(selected_ids)
-    auto_added = resolved - selected_ids
+    resolved     = resolve_dependencies(selected_ids)
+    auto_added   = resolved - selected_ids
     if auto_added:
         names = [find_service(sid)["name"] for sid in auto_added if find_service(sid)]
         print(f"\n  {YELLOW}⚠  Auto-adding required dependencies: {', '.join(names)}{RESET}")
-
     return list(resolved), resolved
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    # Step 1: ensure .env exists
     if not os.path.exists(ENV_FILE):
         ok = setup_first_run()
         if not ok:
             print(f"\n  {SUBTEXT}Setup cancelled.{RESET}\n")
             return
 
-    # Step 2: service selection
     os.system("cls" if os.name == "nt" else "clear")
     print(f"\n  {MAUVE}◆ Homelab Deploy Tool{RESET}")
     print(f"  {SURFACE}{'─' * 40}{RESET}\n")
-    print(f"  {c(GREEN, '✓')} {c(SUBTEXT, 'Core (always deployed):')}")
+    print(f"  {GREEN}✓ Core (always deployed):{RESET}")
     for svc in CORE:
         print(f"    {SUBTEXT}{svc['name']}{RESET}  {SURFACE}—  {svc['desc']}{RESET}")
     print()
@@ -495,12 +699,12 @@ def main():
     mode = questionary.select(
         "How would you like to select services?",
         choices=[
-            Choice(f"{c(TEXT, 'By category')}       {SUBTEXT}deploy entire groups at once{RESET}",   value="category"),
-            Choice(f"{c(TEXT, 'Individual')}         {SUBTEXT}pick specific services{RESET}",         value="individual"),
-            Choice(f"{c(TEXT, 'Deploy everything')}  {SUBTEXT}bring the full stack up{RESET}",        value="all"),
-            Choice(f"{c(TEXT, 'Core only')}          {SUBTEXT}proxy + DNS only{RESET}",               value="core"),
+            Choice("By category        — deploy entire groups at once", value="category"),
+            Choice("Individual         — pick specific services",        value="individual"),
+            Choice("Deploy everything  — bring the full stack up",       value="all"),
+            Choice("Core only          — proxy + DNS only",              value="core"),
             Separator(),
-            Choice(f"{c(SUBTEXT, 'Reconfigure .env')}  {SUBTEXT}re-run setup wizard{RESET}",          value="reconfigure"),
+            Choice("Reconfigure .env   — re-run setup wizard",           value="reconfigure"),
         ],
         style=MOCHA,
     ).ask()
@@ -510,7 +714,7 @@ def main():
 
     if mode == "reconfigure":
         existing = load_env()
-        values = run_setup(existing)
+        values   = run_setup(existing)
         if values:
             save_env(values)
             print(f"\n  {GREEN}✓ .env updated.{RESET}\n")
@@ -520,7 +724,7 @@ def main():
 
     if mode == "all":
         selected_ids = {svc["id"] for svc in all_optional_services()}
-        profiles = ["all"]
+        profiles     = ["all"]
     elif mode == "core":
         selected_ids, profiles = set(), []
     elif mode == "category":
@@ -544,8 +748,7 @@ def main():
         else:
             print(f"\n  {RED}✗ Something went wrong. Check the output above.{RESET}\n")
     else:
-        cmd = build_command(profiles)
-        print(f"\n  {SUBTEXT}Run manually:{RESET}  {TEXT}{cmd}{RESET}\n")
+        print(f"\n  {SUBTEXT}Run manually:{RESET}  {TEXT}{build_command(profiles)}{RESET}\n")
 
 if __name__ == "__main__":
     try:
