@@ -12,6 +12,7 @@ Thumbs.db
 __pycache__/
 *.pyc
 *.pyo
+.venv/
 
 # Local data directories (created at runtime if using relative paths)
 data/

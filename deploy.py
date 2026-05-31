@@ -11,19 +11,29 @@ import shutil
 import subprocess
 import sys
 
-# ── Auto-install dependencies ────────────────────────────────────────────────
+# ── Venv bootstrap ───────────────────────────────────────────────────────────
+# On first run, creates a .venv in the project directory, installs dependencies,
+# and re-executes itself inside the venv — fully transparent to the user.
 
-def install(package):
-    subprocess.check_call([sys.executable, "-m", "pip", "install", package, "-q"])
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+VENV_DIR   = os.path.join(SCRIPT_DIR, ".venv")
+VENV_PYTHON = os.path.join(VENV_DIR, "bin", "python") if os.name != "nt" \
+              else os.path.join(VENV_DIR, "Scripts", "python.exe")
 
-try:
-    import questionary
-    from questionary import Style, Choice, Separator
-except ImportError:
-    print("Installing questionary...")
-    install("questionary")
-    import questionary
-    from questionary import Style, Choice, Separator
+def in_venv():
+    return sys.prefix != sys.base_prefix
+
+if not in_venv():
+    if not os.path.exists(VENV_PYTHON):
+        print("Setting up environment (first run only)...")
+        subprocess.check_call([sys.executable, "-m", "venv", VENV_DIR])
+    subprocess.check_call([VENV_PYTHON, "-m", "pip", "install", "questionary", "-q"])
+    os.execv(VENV_PYTHON, [VENV_PYTHON] + sys.argv)
+
+# ── Dependencies (guaranteed available inside venv) ──────────────────────────
+
+import questionary
+from questionary import Style, Choice, Separator
 
 # ── Catppuccin Mocha style ───────────────────────────────────────────────────
 
