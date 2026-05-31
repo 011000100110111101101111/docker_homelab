@@ -279,6 +279,601 @@ def gen_password(length=32):
 
 # ── Wizard helpers ────────────────────────────────────────────────────────────
 
+# ── Pure-Python NFSv3 path checker ───────────────────────────────────────────
+# Uses raw sockets + XDR/SunRPC — no OS tools, no extra packages required.
+
+import random
+import struct
+import socket as _socket
+import time as _time
+
+def _xdr_uint(v):
+    return struct.pack(">I", v)
+
+def _xdr_str(s):
+    if isinstance(s, str):
+        s = s.encode()
+    n = len(s)
+    return struct.pack(">I", n) + s + b"\x00" * ((-n) % 4)
+
+_xdr_opaque = _xdr_str  # same wire format
+
+def _rd_uint(buf, o):
+    v, = struct.unpack_from(">I", buf, o)
+    return v, o + 4
+
+def _rd_opaque(buf, o):
+    n, o = _rd_uint(buf, o)
+    return buf[o : o + n], o + n + ((-n) % 4)
+
+_AUTH_NONE = _xdr_uint(0) + _xdr_uint(0)  # flavor=AUTH_NONE, body=empty
+
+def _auth_sys(uid=0, gid=0):
+    """Build AUTH_SYS (flavor=1) credentials — required by most NFS servers."""
+    body = (
+        _xdr_uint(int(_time.time()) & 0xFFFFFFFF) +  # stamp
+        _xdr_str(b"homelab") +                        # machine name
+        _xdr_uint(uid) +                              # uid
+        _xdr_uint(gid) +                              # gid
+        _xdr_uint(0)                                  # no auxiliary gids
+    )
+    return _xdr_uint(1) + _xdr_opaque(body)           # flavor=1 + body
+
+def _try_resvport(sock, proto):
+    """
+    Bind sock to a random privileged port (600-1023) — equivalent to -o resvport.
+    Many NFS servers require the client to use a source port < 1024 ("secure" exports).
+    Silently skips if we lack permission (non-root); portmapper/EXPORTLIST still work,
+    but MOUNT will be rejected with stat=13 until run as root/sudo.
+    """
+    candidates = list(range(600, 1024))
+    random.shuffle(candidates)
+    for p in candidates:
+        try:
+            sock.bind(('', p))
+            return
+        except OSError:
+            pass
+
+def _rpc_call(host, port, prog, ver, proc, body, auth=None, timeout=5):
+    creds = auth if auth is not None else _AUTH_NONE
+    xid   = random.randint(1, 0xFFFFFFFF)
+    msg   = (
+        _xdr_uint(xid)  + _xdr_uint(0) + _xdr_uint(2) +
+        _xdr_uint(prog) + _xdr_uint(ver) + _xdr_uint(proc) +
+        creds + _AUTH_NONE +                           # creds + verifier (always NONE)
+        body
+    )
+    frame = struct.pack(">I", 0x80000000 | len(msg)) + msg
+
+    s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    _try_resvport(s, 'tcp')
+    try:
+        s.connect((host, port))
+        s.sendall(frame)
+        # RFC 5531 §11: TCP uses record-mark framing; high bit = last-fragment.
+        # A reply may span multiple fragments — accumulate until last-fragment seen.
+        reply = b""
+        while True:
+            rm = b""
+            while len(rm) < 4:
+                rm += s.recv(4 - len(rm))
+            hdr       = struct.unpack(">I", rm)[0]
+            last_frag = bool(hdr & 0x80000000)
+            frag_len  = hdr & 0x7FFFFFFF
+            frag = b""
+            while len(frag) < frag_len:
+                frag += s.recv(frag_len - len(frag))
+            reply += frag
+            if last_frag:
+                break
+    finally:
+        s.close()
+
+    o = 12
+    _, o = _rd_uint(reply, o)
+    _, o = _rd_opaque(reply, o)
+    stat, o = _rd_uint(reply, o)
+    if stat != 0:
+        raise OSError(f"RPC accept_stat={stat}")
+    return reply, o
+
+def _rpc_call_udp(host, port, prog, ver, proc, body, auth=None, timeout=5):
+    """Sun RPC over UDP — no record mark framing."""
+    creds = auth if auth is not None else _AUTH_NONE
+    xid   = random.randint(1, 0xFFFFFFFF)
+    msg   = (
+        _xdr_uint(xid) + _xdr_uint(0) + _xdr_uint(2) +
+        _xdr_uint(prog) + _xdr_uint(ver) + _xdr_uint(proc) +
+        creds + _AUTH_NONE +
+        body
+    )
+    with _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM) as s:
+        s.settimeout(timeout)
+        _try_resvport(s, 'udp')
+        s.sendto(msg, (host, port))
+        reply, _ = s.recvfrom(65536)
+    o = 12
+    _, o = _rd_uint(reply, o)
+    _, o = _rd_opaque(reply, o)
+    stat, o = _rd_uint(reply, o)
+    if stat != 0:
+        raise OSError(f"RPC accept_stat={stat}")
+    return reply, o
+
+def _portmap_getport(host, prog, ver, proto=6):
+    """
+    Ask the portmapper (port 111) for the port of a given program.
+    Uses PMAPPROC_GETPORT = procedure 3 (RFC 1833 portmapper v2).
+    Tries TCP first, then UDP — some embedded devices only answer UDP.
+    """
+    body = _xdr_uint(prog) + _xdr_uint(ver) + _xdr_uint(proto) + _xdr_uint(0)
+    try:
+        reply, o = _rpc_call(host, 111, 100000, 2, 3, body)
+    except Exception:
+        reply, o = _rpc_call_udp(host, 111, 100000, 2, 3, body)
+    port, _ = _rd_uint(reply, o)
+    return port
+
+def diagnose_nfs(nas_ip):
+    """Print step-by-step NFS connectivity diagnostics."""
+    print(f"\n  {BLUE}NFS diagnostics — {nas_ip}{RESET}\n")
+
+    def check(label, fn):
+        print(f"  {SUBTEXT}{label}...{RESET}", end="", flush=True)
+        try:
+            result = fn()
+            print(f"\r  {GREEN}✓{RESET}  {label:<44} {TEXT}{result or ''}{RESET}")
+            return result
+        except Exception as e:
+            print(f"\r  {RED}✗{RESET}  {label:<44} {SUBTEXT}{e}{RESET}")
+            return None
+
+    # Port reachability
+    def tcp111():
+        _socket.create_connection((nas_ip, 111), timeout=3).close()
+        return "open"
+    def tcp2049():
+        _socket.create_connection((nas_ip, 2049), timeout=3).close()
+        return "open"
+
+    port111  = check("Port 111 TCP (portmapper)", tcp111)
+    port2049 = check("Port 2049 TCP (NFS)",       tcp2049)
+
+    # Portmapper RPC
+    mountd_port = check(
+        "Portmapper: find mountd",
+        lambda: _portmap_getport(nas_ip, 100005, 3) or "—",
+    )
+
+    if mountd_port and mountd_port != "—":
+        exports = check(
+            f"MOUNT EXPORTLIST on port {mountd_port}",
+            lambda: ", ".join(_mount_exports(nas_ip, int(mountd_port))) or "(none)",
+        )
+        nfs_port = check(
+            "Portmapper: find NFS (TCP)",
+            lambda: _portmap_getport(nas_ip, 100003, 3, proto=6),
+        )
+        if nfs_port and exports:
+            first_export = _mount_exports(nas_ip, int(mountd_port))[0]
+            fh = check(
+                f"MOUNT MNT {first_export}",
+                lambda: f"{len(_mount_mnt(nas_ip, int(mountd_port), first_export))} byte handle",
+            )
+    print()
+
+def _export_label(path):
+    """
+    Return a human-readable label for an NFS export path.
+    Unifi exports look like /volume/<UUID>/.srv/.unifi-drive/<Name>/.data
+    — we extract just <Name>.
+    """
+    import re as _re
+    m = _re.search(r"\.unifi-drive/([^/]+)", path)
+    if m:
+        return m.group(1)
+    # Generic fallback: last non-hidden, short component
+    parts = [p for p in path.split("/") if p and not p.startswith(".") and len(p) < 40]
+    return parts[-1] if parts else path
+
+def _normalize_export(path):
+    """
+    Unifi registers internal UUID paths with portmapper, but NFS ACLs are
+    applied to the user-visible /var/nfs/shared/<Name> path. Convert so
+    we mount the path the user actually configured access for.
+    Input:  /volume/<UUID>/.srv/.unifi-drive/<Name>/.data
+    Output: /var/nfs/shared/<Name>
+    """
+    import re as _re
+    m = _re.search(r"\.unifi-drive/([^/]+)", path)
+    if m:
+        return f"/var/nfs/shared/{m.group(1)}"
+    return path  # unchanged for non-Unifi
+
+def _mount_exports(host, port):
+    """List NFS exports via MOUNT EXPORTLIST (proc 5)."""
+    reply, o = _rpc_call(host, port, 100005, 3, 5, b"", auth=_auth_sys())
+    exports = []
+    while o < len(reply):
+        vf, o = _rd_uint(reply, o)
+        if not vf:
+            break
+        ex, o = _rd_opaque(reply, o)
+        exports.append(ex.decode())
+        # skip group list
+        while o < len(reply):
+            gf, o = _rd_uint(reply, o)
+            if not gf:
+                break
+            _, o = _rd_opaque(reply, o)
+    return exports
+
+_MOUNT_ERRORS = {
+    1:     "permission denied",
+    2:     "no such file or directory",
+    5:     "I/O error",
+    13:    "access denied — this host is not in the NFS export's allowed client list",
+    20:    "not a directory",
+    22:    "invalid argument",
+    63:    "name too long",
+    10004: "operation not supported",
+    10006: "server fault",
+}
+
+def _mount_mnt(host, port, path, udp=False):
+    """
+    Mount a path and return its NFSv3 file handle.
+    Tries TCP first; pass udp=True to use UDP transport.
+    """
+    call = _rpc_call_udp if udp else _rpc_call
+    reply, o = call(host, port, 100005, 3, 1, _xdr_str(path), auth=_auth_sys())
+    stat, o  = _rd_uint(reply, o)
+    if stat != 0:
+        raise OSError(_MOUNT_ERRORS.get(stat, f"error code {stat}"))
+    fh, _ = _rd_opaque(reply, o)
+    return fh
+
+def _mount_umnt(host, port, path, udp=False):
+    """Send MOUNT UMNT (proc 3) to remove this host from the server's mount list."""
+    try:
+        call = _rpc_call_udp if udp else _rpc_call
+        call(host, port, 100005, 3, 3, _xdr_str(path), auth=_auth_sys())
+    except Exception:
+        pass  # best-effort; server state is advisory only
+
+def _nfs_mkdir(host, port, parent_fh, name, mode=0o755):
+    """NFSv3 MKDIR (proc 9): create a directory under parent_fh."""
+    sattr = (
+        _xdr_uint(1) + _xdr_uint(mode) +   # set_mode = 0755
+        _xdr_uint(0) +                       # set_uid:   DONT_CHANGE
+        _xdr_uint(0) +                       # set_gid:   DONT_CHANGE
+        _xdr_uint(0) +                       # set_size:  DONT_CHANGE
+        _xdr_uint(0) +                       # set_atime: DONT_CHANGE
+        _xdr_uint(0)                         # set_mtime: DONT_CHANGE
+    )
+    body = _xdr_opaque(parent_fh) + _xdr_str(name) + sattr
+    reply, o = _rpc_call(host, port, 100003, 3, 9, body, auth=_auth_sys())
+    stat, _ = _rd_uint(reply, o)
+    if stat != 0:
+        raise OSError(f"MKDIR stat={stat}")
+
+def _nfs_lookup(host, port, fh, name):
+    """NFSv3 LOOKUP: look up one component; return child filehandle or None."""
+    body = _xdr_opaque(fh) + _xdr_str(name)
+    try:
+        reply, o = _rpc_call(host, port, 100003, 3, 3, body, auth=_auth_sys())
+        stat, o  = _rd_uint(reply, o)
+        if stat != 0:
+            return None
+        child, _ = _rd_opaque(reply, o)
+        return child
+    except Exception:
+        return None
+
+def _xdr_uint64(v):
+    return struct.pack(">Q", v)
+
+def _rd_uint64(buf, o):
+    v, = struct.unpack_from(">Q", buf, o)
+    return v, o + 8
+
+def _rd_fattr3(buf, o):
+    """Parse fattr3: return (ftype, offset_after). ftype 2 = directory."""
+    ftype, o = _rd_uint(buf, o)
+    o += 80   # skip mode(4)+nlink(4)+uid(4)+gid(4)+size(8)+used(8)+rdev(8)+fsid(8)+fileid(8)+atime(8)+mtime(8)+ctime(8)
+    return ftype, o
+
+def _rd_post_op_attr(buf, o):
+    """Parse post_op_attr; return (ftype_or_None, offset_after)."""
+    follows, o = _rd_uint(buf, o)
+    if follows:
+        ftype, o = _rd_fattr3(buf, o)
+        return ftype, o
+    return None, o
+
+def _rd_post_op_fh3(buf, o):
+    """Parse post_op_fh3; return (fh_or_None, offset_after)."""
+    follows, o = _rd_uint(buf, o)
+    if follows:
+        fh, o = _rd_opaque(buf, o)
+        return fh, o
+    return None, o
+
+def _nfs_readdirplus(host, port, fh):
+    """
+    NFSv3 READDIRPLUS (proc 17): list a directory.
+    Returns [(name, ftype, child_fh)] — ftype 2 = directory.
+    """
+    # dircount=4096, maxcount=32768
+    body = _xdr_opaque(fh) + struct.pack(">QQ", 0, 0) + _xdr_uint(4096) + _xdr_uint(32768)
+    try:
+        reply, o = _rpc_call(host, port, 100003, 3, 17, body, auth=_auth_sys())
+        stat, o  = _rd_uint(reply, o)
+        if stat != 0:
+            return []
+        _, o = _rd_post_op_attr(reply, o)   # skip dir attributes
+        o   += 8                             # skip cookieverf (uint64)
+        entries = []
+        while o < len(reply):
+            vf, o = _rd_uint(reply, o)
+            if not vf:
+                break
+            _,     o = _rd_uint64(reply, o)     # fileid
+            name,  o = _rd_opaque(reply, o)
+            _,     o = _rd_uint64(reply, o)     # cookie
+            ftype, o = _rd_post_op_attr(reply, o)
+            cfh,   o = _rd_post_op_fh3(reply, o)
+            n = name.decode("utf-8", errors="replace")
+            if n not in (".", ".."):
+                entries.append((n, ftype, cfh))
+        return entries
+    except Exception:
+        return []
+
+def _nfs_connect(nas_ip):
+    """
+    Connect to NFS server; return (mountd_tcp, mountd_udp, nfs_port, exports).
+    A port value of 0 means not available on that transport.
+    Raises on failure.
+    """
+    mountd_tcp  = _portmap_getport(nas_ip, 100005, 3, proto=6)
+    mountd_udp  = _portmap_getport(nas_ip, 100005, 3, proto=17)
+    nfs_port    = _portmap_getport(nas_ip, 100003, 3, proto=6)
+    # Use whichever mountd port is non-zero for export listing
+    mountd_port = mountd_tcp or mountd_udp
+    if not mountd_port:
+        raise OSError("mountd port not found in portmapper")
+    exports = _mount_exports(nas_ip, mountd_port)
+    return mountd_tcp, mountd_udp, nfs_port, exports
+
+def browse_nfs(nas_ip):
+    """
+    Interactive NFSv3 directory browser.
+    Returns the chosen absolute path string, or None if cancelled.
+    """
+    try:
+        mountd_tcp, mountd_udp, nfs_port, exports = _nfs_connect(nas_ip)
+    except Exception:
+        return None
+
+    if not exports:
+        return None
+
+    # Normalize export paths (Unifi UUID → /var/nfs/shared/<Name>)
+    # and build label map for display
+    norm_exports = {_normalize_export(e): _export_label(e) for e in exports}
+
+    # Pick export — show human-readable labels, store normalized mount path as value
+    if len(norm_exports) == 1:
+        export = next(iter(norm_exports))
+        print(f"  {SUBTEXT}Export: {norm_exports[export]}{RESET}")
+    else:
+        export = questionary.select(
+            "  NFS share:",
+            choices=[
+                Choice(label, value=path)
+                for path, label in sorted(norm_exports.items(), key=lambda x: x[1])
+            ],
+            style=MOCHA,
+        ).ask()
+        if export is None:
+            return None
+
+    # Try all combinations: (path, port, udp_transport)
+    # Include both the normalized path (/var/nfs/shared/<Name>) and the
+    # original UUID path — mountd only registered the UUID path with portmapper,
+    # so the normalized alias might be rejected.
+    raw_exports  = exports                          # UUID paths from portmapper
+    norm_export  = export                           # /var/nfs/shared/<Name>
+    uuid_export  = next((e for e in raw_exports
+                         if _export_label(e) == _export_label(norm_export)), None)
+
+    paths_to_try = list(dict.fromkeys(filter(None, [norm_export, uuid_export])))
+    ports_to_try = []
+    if mountd_tcp: ports_to_try += [(mountd_tcp, False), (mountd_tcp, True)]
+    if mountd_udp: ports_to_try += [(mountd_udp, True),  (mountd_udp, False)]
+
+    root_fh    = None
+    last_error = None
+    for mount_path in paths_to_try:
+        for port, udp in ports_to_try:
+            try:
+                root_fh = _mount_mnt(nas_ip, port, mount_path, udp=udp)
+                export  = mount_path
+                break
+            except Exception as e:
+                last_error = str(e)
+        if root_fh is not None:
+            break
+
+    if root_fh is None:
+        try:
+            s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+            s.connect((nas_ip, 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+        except Exception:
+            local_ip = "unknown"
+
+        print(f"\n  {YELLOW}⚠  NFS mount failed from this machine ({local_ip}).{RESET}")
+        if last_error:
+            print(f"  {SUBTEXT}Error: {last_error}{RESET}")
+        print(f"  {SUBTEXT}NFS servers require a privileged source port — try: sudo python3 deploy.py{RESET}")
+        return None
+
+    # Navigation stack: list of (display_path, nfs_export_path, fh)
+    # display_path uses the clean label for the export root, then appends real subdir names
+    export_label  = _export_label(export)
+    export_root   = export.rstrip("/")
+    stack = [(export_label, export_root, root_fh)]
+
+    while True:
+        display_path, nfs_path, current_fh = stack[-1]
+        print(f"\n  {SUBTEXT}Location: {RESET}{TEXT}{display_path}{RESET}")
+
+        raw = _nfs_readdirplus(nas_ip, nfs_port, current_fh)
+        dirs = sorted(
+            [(n, cfh) for n, ftype, cfh in raw if ftype == 2 and cfh is not None],
+            key=lambda x: x[0].lower(),
+        )
+
+        choices = []
+        if len(stack) > 1:
+            choices.append(Choice("  ..  (go up)", value="__back__"))
+        choices.append(Choice("  [select this folder]", value="__select__"))
+        if dirs:
+            choices.append(Separator())
+            for name, cfh in dirs:
+                choices.append(Choice(f"  {name}/", value=("__enter__", name, cfh)))
+        elif len(raw) == 0:
+            print(f"  {YELLOW}⚠  Could not read directory contents (empty or permission denied){RESET}")
+
+        action = questionary.select(
+            "  Navigate:",
+            choices=choices,
+            style=MOCHA,
+        ).ask()
+
+        if action is None:
+            _mount_umnt(nas_ip, mountd_tcp or mountd_udp, export)
+            return None
+        elif action == "__back__":
+            stack.pop()
+        elif action == "__select__":
+            _mount_umnt(nas_ip, mountd_tcp or mountd_udp, export)
+            return nfs_path          # return the real NFS export path
+        elif isinstance(action, tuple):
+            _, name, cfh = action
+            stack.append((
+                f"{display_path}/{name}",   # friendly display path
+                f"{nfs_path}/{name}",       # real NFS path
+                cfh,
+            ))
+
+def check_nfs_paths(nas_ip, paths):
+    """
+    Check remote NFS paths using pure-Python RPC/NFSv3.
+    No OS tools or extra packages required.
+    Returns {key: bool} on success, or None on any error.
+    """
+    try:
+        mountd_tcp = _portmap_getport(nas_ip, 100005, 3, proto=6)
+        mountd_udp = _portmap_getport(nas_ip, 100005, 3, proto=17)
+        mountd_port = mountd_tcp or mountd_udp
+        if not mountd_port:
+            return None
+
+        exports = _mount_exports(nas_ip, mountd_port)
+        if not exports:
+            return None
+
+        # Normalize Unifi UUID paths → /var/nfs/shared/<Name>
+        exports = [_normalize_export(e) for e in exports]
+
+        # Find longest export that is a prefix of our base path
+        first = next(iter(paths.values()))
+        candidates = sorted(
+            [e for e in exports if first.startswith(e)],
+            key=len, reverse=True,
+        )
+        if not candidates:
+            return None
+        export = candidates[0]
+
+        nfs_port = _portmap_getport(nas_ip, 100003, 3)
+        if not nfs_port:
+            return None
+
+        root_fh = _mount_mnt(nas_ip, mountd_tcp or mountd_udp, export,
+                             udp=(not mountd_tcp and bool(mountd_udp)))
+
+        results = {}
+        for key, path in paths.items():
+            rel   = path[len(export):].lstrip("/")
+            parts = [p for p in rel.split("/") if p]
+            fh    = root_fh
+            for part in parts:
+                fh = _nfs_lookup(nas_ip, nfs_port, fh, part)
+                if fh is None:
+                    break
+            results[key] = fh is not None
+        return results
+
+    except Exception:
+        return None
+
+def create_nfs_paths(nas_ip, paths):
+    """
+    Create missing NFS directories via NFSv3 MKDIR.
+    Returns {key: True/False} — True = created (or already existed), False = failed.
+    """
+    try:
+        mountd_tcp  = _portmap_getport(nas_ip, 100005, 3, proto=6)
+        mountd_udp  = _portmap_getport(nas_ip, 100005, 3, proto=17)
+        mountd_port = mountd_tcp or mountd_udp
+        nfs_port    = _portmap_getport(nas_ip, 100003, 3)
+        if not mountd_port or not nfs_port:
+            return {k: False for k in paths}
+
+        exports = _mount_exports(nas_ip, mountd_port)
+        exports = [_normalize_export(e) for e in exports]
+        first   = next(iter(paths.values()))
+        export  = next((e for e in sorted(exports, key=len, reverse=True)
+                        if first.startswith(e)), None)
+        if not export:
+            return {k: False for k in paths}
+
+        root_fh = _mount_mnt(nas_ip, mountd_port, export,
+                              udp=(not mountd_tcp and bool(mountd_udp)))
+
+        results = {}
+        for key, path in paths.items():
+            rel   = path[len(export):].lstrip("/")
+            parts = [p for p in rel.split("/") if p]
+            fh    = root_fh
+            ok    = True
+            for part in parts:
+                child = _nfs_lookup(nas_ip, nfs_port, fh, part)
+                if child is None:
+                    try:
+                        _nfs_mkdir(nas_ip, nfs_port, fh, part)
+                        child = _nfs_lookup(nas_ip, nfs_port, fh, part)
+                    except Exception:
+                        pass
+                if child is None:
+                    ok = False
+                    break
+                fh = child
+            results[key] = ok
+
+        _mount_umnt(nas_ip, mountd_port, export)
+        return results
+
+    except Exception:
+        return {k: False for k in paths}
+
 def section_header(title, desc=None):
     pad = max(1, 38 - len(title))
     print(f"\n  {BLUE}── {title} {'─' * pad}{RESET}")
@@ -439,42 +1034,73 @@ def wizard_nas(existing):
     # NAS IP (not needed for local)
     nas_ip = existing.get("NAS_IP", "192.168.1.100")
     if device_key != "local":
+        print()
         nas_ip = questionary.text(
-            f"\n  NAS IP address [{nas_ip}]:",
+            f"  NAS IP address:",
             default=nas_ip,
             style=MOCHA,
         ).ask() or nas_ip
 
-    # Guess base path from existing config
-    existing_media = existing.get("NAS_MEDIA_PATH", "")
-    guessed_base = ""
-    if existing_media and existing_media not in ("/volume1/media", ""):
-        parts = existing_media.rstrip("/").split("/")
-        if len(parts) > 1:
-            guessed_base = "/".join(parts[:-1])
-    default_base = guessed_base or device["example"]
+        # Connectivity test
+        print(f"  {SUBTEXT}Testing connectivity to {nas_ip}...{RESET}", end="", flush=True)
+        ping_cmd = ["ping", "-c", "1", "-W", "2", nas_ip] if os.name != "nt" \
+                   else ["ping", "-n", "1", "-w", "2000", nas_ip]
+        result = subprocess.run(ping_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if result.returncode == 0:
+            print(f"\r  {GREEN}✓ Reachable: {nas_ip}{RESET}                        ")
+        else:
+            print(f"\r  {YELLOW}⚠  Could not reach {nas_ip} — check IP and network.{RESET}")
+            proceed = questionary.confirm(
+                "  Continue anyway?",
+                default=False,
+                style=MOCHA,
+            ).ask()
+            if not proceed:
+                return {}
 
-    # Show path template hint if the device has one
-    print()
-    if device.get("template"):
-        print(f"  {SURFACE}Template: {device['template']}{RESET}")
+    # Base path — browse NFS interactively for NFS-capable devices, text input otherwise
+    nfs_capable = device_key in ("unifi", "nfs", "truenas", "synology", "qnap")
+    base = None
 
-    base = questionary.text(
-        f"  Base storage path [{default_base}]:",
-        default=default_base,
-        style=MOCHA,
-    ).ask() or default_base
+    if nfs_capable and device_key != "local":
+        print(f"\n  {SUBTEXT}Connecting to NFS on {nas_ip}...{RESET}", end="", flush=True)
+        try:
+            _portmap_getport(nas_ip, 100005, 3)
+            can_browse = True
+        except Exception:
+            can_browse = False
+
+        if can_browse:
+            print(f"\r  {GREEN}✓ NFS available — browse to select your base folder{RESET}          ")
+            base = browse_nfs(nas_ip)
+        else:
+            print(f"\r  {YELLOW}⚠  NFS not reachable — running diagnostics...{RESET}               ")
+            diagnose_nfs(nas_ip)
+            print(f"  {SUBTEXT}You can still enter the path manually below.{RESET}")
+
+    if base is None:
+        # Fallback: manual text input
+        existing_media = existing.get("NAS_MEDIA_PATH", "")
+        guessed_base = ""
+        if existing_media and existing_media not in ("/volume1/media", ""):
+            parts = existing_media.rstrip("/").split("/")
+            if len(parts) > 1:
+                guessed_base = "/".join(parts[:-1])
+        default_base = guessed_base or device["example"]
+
+        print()
+        if device.get("template"):
+            print(f"  {SURFACE}Template: {device['template']}{RESET}")
+        base = questionary.text(
+            "  Base storage path:",
+            default=default_base,
+            style=MOCHA,
+        ).ask() or default_base
 
     base = base.rstrip("/")
 
     # Derive subfolder paths
     paths = {key: f"{base}/{sub}" for key, sub in SUBFOLDER_KEYS.items()}
-
-    # Show derived paths
-    print(f"\n  {BLUE}Derived paths:{RESET}")
-    for key, path in paths.items():
-        label = SUBFOLDER_KEYS[key].capitalize()
-        print(f"    {SUBTEXT}{label:<12}{RESET} {TEXT}{path}{RESET}")
 
     # Offer to customize individual paths
     print()
@@ -489,12 +1115,92 @@ def wizard_nas(existing):
         for key in paths:
             label = SUBFOLDER_KEYS[key].capitalize()
             val = questionary.text(
-                f"  {label} [{paths[key]}]:",
+                f"  {label}:",
                 default=paths[key],
                 style=MOCHA,
             ).ask()
             if val:
                 paths[key] = val
+
+    # Show paths — for local devices check existence and offer to create;
+    # for remote devices the paths live on the NAS so we just display them.
+    print(f"\n  {BLUE}Paths{RESET}")
+    if device_key == "local":
+        missing_paths = []
+        for key, path in paths.items():
+            label = SUBFOLDER_KEYS[key].capitalize()
+            if os.path.isdir(path):
+                print(f"  {GREEN}✓{RESET}  {SUBTEXT}{label:<12}{RESET}{TEXT}{path}{RESET}")
+            else:
+                print(f"  {YELLOW}✗{RESET}  {SUBTEXT}{label:<12}{RESET}{SUBTEXT}{path}{RESET}")
+                missing_paths.append((label, path))
+
+        if missing_paths:
+            print()
+            create = questionary.confirm(
+                f"  Create {len(missing_paths)} missing subfolder(s)?",
+                default=True,
+                style=MOCHA,
+            ).ask()
+            if create:
+                print()
+                for label, path in missing_paths:
+                    try:
+                        os.makedirs(path, exist_ok=True)
+                        print(f"  {GREEN}✓ Created:{RESET}  {TEXT}{path}{RESET}")
+                    except OSError as e:
+                        print(f"  {RED}✗ Failed:{RESET}   {SUBTEXT}{path} — {e}{RESET}")
+    else:
+        nfs_capable = device_key in ("unifi", "nfs", "truenas", "synology", "qnap")
+        nfs_results = None
+
+        if nfs_capable:
+            print(f"  {SUBTEXT}Checking paths on NAS...{RESET}", end="", flush=True)
+            nfs_results = check_nfs_paths(nas_ip, paths)
+            # Clear the checking line
+            print(f"\r{' ' * 40}\r", end="", flush=True)
+
+        if nfs_results is not None:
+            missing_remote = []
+            for key, path in paths.items():
+                label = SUBFOLDER_KEYS[key].capitalize()
+                if nfs_results.get(key):
+                    print(f"  {GREEN}✓{RESET}  {SUBTEXT}{label:<12}{RESET}{TEXT}{path}{RESET}")
+                else:
+                    print(f"  {YELLOW}✗{RESET}  {SUBTEXT}{label:<12}{RESET}{SUBTEXT}{path}{RESET}")
+                    missing_remote.append((label, path))
+            if missing_remote:
+                print(f"\n  {YELLOW}⚠  {len(missing_remote)} folder(s) not found on NAS.{RESET}")
+                action = questionary.select(
+                    "  What would you like to do?",
+                    choices=[
+                        Choice("Create them now (via NFS)", value="auto"),
+                        Choice("I'll create them manually",  value="manual"),
+                    ],
+                    style=MOCHA,
+                ).ask()
+
+                if action == "auto":
+                    missing_paths = {k: p for k, p in paths.items()
+                                     if not nfs_results.get(k)}
+                    print(f"  {SUBTEXT}Creating folders...{RESET}", end="", flush=True)
+                    created = create_nfs_paths(nas_ip, missing_paths)
+                    print(f"\r{' ' * 30}\r", end="", flush=True)
+                    for key, path in missing_paths.items():
+                        label = SUBFOLDER_KEYS[key].capitalize()
+                        if created.get(key):
+                            print(f"  {GREEN}✓{RESET}  {SUBTEXT}{label:<12}{RESET}{TEXT}{path}{RESET}")
+                        else:
+                            print(f"  {RED}✗{RESET}  {SUBTEXT}{label:<12}{RESET}{SUBTEXT}{path} — could not create{RESET}")
+                else:
+                    print(f"  {SUBTEXT}Create these folders on your NAS before starting containers.{RESET}")
+            else:
+                print(f"\n  {GREEN}✓ All paths verified on NAS.{RESET}")
+        else:
+            for key, path in paths.items():
+                label = SUBFOLDER_KEYS[key].capitalize()
+                print(f"  {SUBTEXT}  {label:<12}{RESET}{TEXT}{path}{RESET}")
+            print(f"\n  {SUBTEXT}Ensure these folders exist on your NAS before starting containers.{RESET}")
 
     return {"NAS_IP": nas_ip, **paths}
 
