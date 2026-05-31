@@ -59,29 +59,36 @@ SURFACE = "\033[38;2;69;71;90m"
 
 # ── Timezone list ─────────────────────────────────────────────────────────────
 
-TIMEZONES = [
-    # Americas
-    "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
-    "America/Phoenix", "America/Anchorage", "America/Honolulu", "America/Toronto",
-    "America/Vancouver", "America/Edmonton", "America/Winnipeg", "America/Halifax",
-    "America/St_Johns", "America/Mexico_City", "America/Sao_Paulo", "America/Buenos_Aires",
-    "America/Bogota", "America/Lima", "America/Santiago", "America/Caracas",
-    # Europe
-    "Europe/London", "Europe/Dublin", "Europe/Lisbon", "Europe/Paris", "Europe/Berlin",
-    "Europe/Madrid", "Europe/Rome", "Europe/Amsterdam", "Europe/Brussels", "Europe/Zurich",
-    "Europe/Stockholm", "Europe/Oslo", "Europe/Copenhagen", "Europe/Helsinki",
-    "Europe/Warsaw", "Europe/Prague", "Europe/Vienna", "Europe/Budapest",
-    "Europe/Bucharest", "Europe/Athens", "Europe/Istanbul", "Europe/Moscow",
-    # Asia / Pacific
-    "Asia/Dubai", "Asia/Karachi", "Asia/Kolkata", "Asia/Dhaka", "Asia/Bangkok",
-    "Asia/Singapore", "Asia/Kuala_Lumpur", "Asia/Hong_Kong", "Asia/Shanghai",
-    "Asia/Tokyo", "Asia/Seoul", "Asia/Taipei",
-    "Australia/Sydney", "Australia/Melbourne", "Australia/Brisbane",
-    "Australia/Adelaide", "Australia/Perth", "Pacific/Auckland", "Pacific/Fiji",
-    # Africa / Other
-    "Africa/Cairo", "Africa/Johannesburg", "Africa/Lagos", "Africa/Nairobi",
-    "UTC",
-]
+TIMEZONES = {
+    "Americas": [
+        "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
+        "America/Phoenix", "America/Anchorage", "America/Honolulu", "America/Toronto",
+        "America/Vancouver", "America/Edmonton", "America/Winnipeg", "America/Halifax",
+        "America/St_Johns", "America/Mexico_City", "America/Sao_Paulo", "America/Buenos_Aires",
+        "America/Bogota", "America/Lima", "America/Santiago", "America/Caracas",
+    ],
+    "Europe": [
+        "Europe/London", "Europe/Dublin", "Europe/Lisbon", "Europe/Paris", "Europe/Berlin",
+        "Europe/Madrid", "Europe/Rome", "Europe/Amsterdam", "Europe/Brussels", "Europe/Zurich",
+        "Europe/Stockholm", "Europe/Oslo", "Europe/Copenhagen", "Europe/Helsinki",
+        "Europe/Warsaw", "Europe/Prague", "Europe/Vienna", "Europe/Budapest",
+        "Europe/Bucharest", "Europe/Athens", "Europe/Istanbul", "Europe/Moscow",
+    ],
+    "Asia / Pacific": [
+        "Asia/Dubai", "Asia/Karachi", "Asia/Kolkata", "Asia/Dhaka", "Asia/Bangkok",
+        "Asia/Singapore", "Asia/Kuala_Lumpur", "Asia/Hong_Kong", "Asia/Shanghai",
+        "Asia/Tokyo", "Asia/Seoul", "Asia/Taipei",
+        "Australia/Sydney", "Australia/Melbourne", "Australia/Brisbane",
+        "Australia/Adelaide", "Australia/Perth", "Pacific/Auckland", "Pacific/Fiji",
+    ],
+    "Africa / Other": [
+        "Africa/Cairo", "Africa/Johannesburg", "Africa/Lagos", "Africa/Nairobi",
+        "UTC",
+    ],
+}
+
+# Flat lookup for timezone detection
+TIMEZONES_FLAT = [tz for tzs in TIMEZONES.values() for tz in tzs]
 
 # ── NAS device presets ────────────────────────────────────────────────────────
 
@@ -102,19 +109,22 @@ NAS_DEVICES = {
         "example": "/mnt/tank/homelab",
     },
     "unifi": {
-        "name":    "Unifi Dream Machine (NFS)",
-        "hint":    "NFS shares: /var/nfs/shared/<share>  →  mount to a local path on this machine",
-        "example": "/var/nfs/shared/homelab",
+        "name":     "Unifi Dream Machine (NFS)",
+        "hint":     "Shares live on the UDM; reference the NFS export path directly",
+        "example":  "/var/nfs/shared/homelab",
+        "template": "/var/nfs/shared/[ShareName]/[PathToFolder]",
     },
     "nfs": {
-        "name":    "Generic NFS mount",
-        "hint":    "Use the local mount point on this machine (e.g. /mnt/nas)",
-        "example": "/mnt/nas/homelab",
+        "name":     "Generic NFS mount",
+        "hint":     "Use the local mount point on this machine (e.g. /mnt/nas)",
+        "example":  "/mnt/nas/homelab",
+        "template": "/mnt/[mountpoint]/[PathToFolder]",
     },
     "smb": {
-        "name":    "SMB / Windows share",
-        "hint":    "Use the local path this machine maps the share to (e.g. /mnt/share or Z:\\)",
-        "example": "/mnt/nas/homelab",
+        "name":     "SMB / Windows share",
+        "hint":     "Use the local path this machine maps the share to",
+        "example":  "/mnt/nas/homelab",
+        "template": "/mnt/[sharename]/[PathToFolder]",
     },
     "local": {
         "name":    "Local directory (no NAS)",
@@ -180,54 +190,54 @@ ENV_SECTIONS = [
 # ── Service definitions ───────────────────────────────────────────────────────
 
 CORE = [
-    {"id": "nginx-proxy-manager", "name": "Nginx Proxy Manager", "desc": "Reverse proxy & SSL termination"},
-    {"id": "adguard",             "name": "AdGuard Home",         "desc": "DNS & ad blocking"},
+    {"id": "nginx-proxy-manager", "name": "Nginx Proxy Manager", "desc": "Reverse proxy & SSL termination", "port": 81},
+    {"id": "adguard",             "name": "AdGuard Home",         "desc": "DNS & ad blocking",              "port": 3000},
 ]
 
 CATEGORIES = [
     {
         "id": "media", "name": "Media", "desc": "Streaming and music",
         "services": [
-            {"id": "jellyfin",  "name": "Jellyfin",  "desc": "Media server"},
-            {"id": "jellyseer", "name": "Jellyseer", "desc": "Media requests", "requires": ["jellyfin"]},
-            {"id": "koel",      "name": "Koel",       "desc": "Music streaming"},
+            {"id": "jellyfin",  "name": "Jellyfin",  "desc": "Media server",    "port": 8096},
+            {"id": "jellyseer", "name": "Jellyseer", "desc": "Media requests",  "port": 5055, "requires": ["jellyfin"]},
+            {"id": "koel",      "name": "Koel",       "desc": "Music streaming", "port": 4533},
         ],
     },
     {
         "id": "photos", "name": "Photos", "desc": "Photo backup and management",
         "services": [
-            {"id": "immich", "name": "Immich", "desc": "Photo management & ML search"},
+            {"id": "immich", "name": "Immich", "desc": "Photo management & ML search", "port": 2283},
         ],
     },
     {
         "id": "productivity", "name": "Productivity", "desc": "Recipes, documents, and automation",
         "services": [
-            {"id": "mealie",        "name": "Mealie",        "desc": "Recipe manager"},
-            {"id": "paperless-ngx", "name": "Paperless-NGX", "desc": "Document management"},
-            {"id": "n8n",           "name": "n8n",           "desc": "Workflow automation"},
+            {"id": "mealie",        "name": "Mealie",        "desc": "Recipe manager",       "port": 9000},
+            {"id": "paperless-ngx", "name": "Paperless-NGX", "desc": "Document management",  "port": 8001},
+            {"id": "n8n",           "name": "n8n",           "desc": "Workflow automation",   "port": 5678},
         ],
     },
     {
         "id": "dashboard", "name": "Dashboards", "desc": "Service overview and content feeds",
         "services": [
-            {"id": "homepage", "name": "Homepage", "desc": "Service dashboard"},
-            {"id": "glance",   "name": "Glance",   "desc": "News & content dashboard"},
+            {"id": "homepage", "name": "Homepage", "desc": "Service dashboard",       "port": 3001},
+            {"id": "glance",   "name": "Glance",   "desc": "News & content dashboard","port": 8181},
         ],
     },
     {
         "id": "books", "name": "Books", "desc": "Reading and book management",
         "services": [
-            {"id": "kavita",      "name": "Kavita",      "desc": "Book reader"},
-            {"id": "calibre-web", "name": "Calibre Web", "desc": "Book processing & library"},
+            {"id": "kavita",      "name": "Kavita",      "desc": "Book reader",            "port": 5001},
+            {"id": "calibre-web", "name": "Calibre Web", "desc": "Book library",           "port": 8083},
         ],
     },
     {
         "id": "dev", "name": "Dev Tools", "desc": "Databases, analytics, and utilities",
         "services": [
-            {"id": "nocodb",    "name": "NocoDB",    "desc": "No-code database UI"},
-            {"id": "metabase",  "name": "Metabase",  "desc": "Analytics & BI"},
-            {"id": "pastefy",   "name": "Pastefy",   "desc": "Paste service"},
-            {"id": "bytestash", "name": "Bytestash", "desc": "Code snippet manager"},
+            {"id": "nocodb",    "name": "NocoDB",    "desc": "No-code database UI",   "port": 8082},
+            {"id": "metabase",  "name": "Metabase",  "desc": "Analytics & BI",        "port": 3002},
+            {"id": "pastefy",   "name": "Pastefy",   "desc": "Paste service",          "port": 4567},
+            {"id": "bytestash", "name": "Bytestash", "desc": "Code snippet manager",   "port": 5003},
         ],
     },
 ]
@@ -283,26 +293,44 @@ def detect_local_timezone():
         for marker in ["/zoneinfo/", "\\zoneinfo\\"]:
             if marker in link:
                 tz = link.split(marker)[-1]
-                if tz in TIMEZONES:
+                if tz in TIMEZONES_FLAT:
                     return tz
     except Exception:
         pass
     return "America/New_York"
+
+def region_for_timezone(tz):
+    """Return which region a timezone belongs to."""
+    for region, tzs in TIMEZONES.items():
+        if tz in tzs:
+            return region
+    return list(TIMEZONES.keys())[0]
 
 # ── Wizard: General ───────────────────────────────────────────────────────────
 
 def wizard_general(existing):
     section_header("General", "Basic system settings")
 
-    detected_tz = detect_local_timezone()
-    default_tz  = existing.get("TZ", detected_tz)
+    detected_tz    = detect_local_timezone()
+    default_tz     = existing.get("TZ", detected_tz)
+    default_region = region_for_timezone(default_tz)
 
-    tz = questionary.autocomplete(
-        "  Timezone:",
-        choices=TIMEZONES,
-        default=default_tz,
+    region = questionary.select(
+        "  Timezone — region:",
+        choices=[Choice(r, value=r) for r in TIMEZONES.keys()],
+        default=default_region,
         style=MOCHA,
-        match_middle=True,
+    ).ask()
+
+    if region is None:
+        return None
+
+    tz_default = default_tz if default_tz in TIMEZONES[region] else TIMEZONES[region][0]
+    tz = questionary.select(
+        "  Timezone:",
+        choices=[Choice(t, value=t) for t in TIMEZONES[region]],
+        default=tz_default,
+        style=MOCHA,
     ).ask()
 
     puid = questionary.text(
@@ -396,10 +424,7 @@ def wizard_nas(existing):
     print()
     device_key = questionary.select(
         "  Storage type:",
-        choices=[
-            Choice(f"{v['name']}  — {v['hint']}", value=k)
-            for k, v in NAS_DEVICES.items()
-        ],
+        choices=[Choice(v["name"], value=k) for k, v in NAS_DEVICES.items()],
         style=MOCHA,
     ).ask()
 
@@ -408,12 +433,14 @@ def wizard_nas(existing):
 
     device = NAS_DEVICES[device_key]
 
+    # Show hint for the selected device
+    print(f"  {SUBTEXT}{device['hint']}{RESET}")
+
     # NAS IP (not needed for local)
     nas_ip = existing.get("NAS_IP", "192.168.1.100")
     if device_key != "local":
-        print(f"\n  {SUBTEXT}Path format: {device['example']}{RESET}\n")
         nas_ip = questionary.text(
-            f"  NAS IP address [{nas_ip}]:",
+            f"\n  NAS IP address [{nas_ip}]:",
             default=nas_ip,
             style=MOCHA,
         ).ask() or nas_ip
@@ -427,7 +454,11 @@ def wizard_nas(existing):
             guessed_base = "/".join(parts[:-1])
     default_base = guessed_base or device["example"]
 
+    # Show path template hint if the device has one
     print()
+    if device.get("template"):
+        print(f"  {SURFACE}Template: {device['template']}{RESET}")
+
     base = questionary.text(
         f"  Base storage path [{default_base}]:",
         default=default_base,
@@ -631,6 +662,37 @@ def print_summary(selected_ids, profiles):
     print(f"  {MAUVE}Command:{RESET}  {TEXT}{build_command(profiles)}{RESET}")
     print()
 
+# ── Access URL summary ────────────────────────────────────────────────────────
+
+def print_access_urls(selected_ids):
+    all_svcs  = {s["id"]: s for s in all_optional_services()}
+    core_svcs = CORE
+
+    print(f"\n  {BLUE}◆ Services are up — access them at:{RESET}")
+    print(f"  {SURFACE}{'─' * 44}{RESET}\n")
+
+    # Core services (always shown)
+    for svc in core_svcs:
+        url  = f"http://localhost:{svc['port']}"
+        name = svc["name"]
+        desc = svc["desc"]
+        pad  = max(1, 22 - len(name))
+        print(f"  {TEXT}{name}{' ' * pad}{RESET}{SUBTEXT}{desc:<28}{RESET}  {MAUVE}{url}{RESET}")
+
+    # Optional services that were deployed
+    deployed = [all_svcs[sid] for sid in selected_ids if sid in all_svcs and "port" in all_svcs[sid]]
+    if deployed:
+        print(f"  {SURFACE}{'─' * 44}{RESET}")
+        for svc in deployed:
+            url  = f"http://localhost:{svc['port']}"
+            name = svc["name"]
+            desc = svc["desc"]
+            pad  = max(1, 22 - len(name))
+            print(f"  {TEXT}{name}{' ' * pad}{RESET}{SUBTEXT}{desc:<28}{RESET}  {MAUVE}{url}{RESET}")
+
+    print(f"\n  {SUBTEXT}Tip: Nginx Proxy Manager (port 81) lets you set up{RESET}")
+    print(f"  {SUBTEXT}     subdomain routing and SSL once services are running.{RESET}\n")
+
 # ── Service selection ─────────────────────────────────────────────────────────
 
 def select_by_category():
@@ -744,7 +806,8 @@ def main():
         print(f"\n  {GREEN}▶ Running:{RESET} {TEXT}{cmd}{RESET}\n")
         result = subprocess.run(cmd, shell=True, cwd=SCRIPT_DIR)
         if result.returncode == 0:
-            print(f"\n  {GREEN}✓ Done.{RESET}\n")
+            print(f"\n  {GREEN}✓ Done.{RESET}")
+            print_access_urls(selected_ids)
         else:
             print(f"\n  {RED}✗ Something went wrong. Check the output above.{RESET}\n")
     else:
