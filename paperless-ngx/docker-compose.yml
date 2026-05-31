@@ -1,0 +1,62 @@
+# ── Paperless-NGX ────────────────────────────────────────────────────────────
+# Document management system. Web UI: http://<host>:8001
+# Drop files into the consume volume to import them automatically.
+# Set NAS_DOCUMENTS_PATH in .env to share your documents directory.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  paperless:
+    image: ghcr.io/paperless-ngx/paperless-ngx:latest
+    container_name: paperless
+    restart: unless-stopped
+    profiles: [all, productivity, paperless-ngx]
+    ports:
+      - "8001:8000"
+    volumes:
+      - paperless-data:/usr/src/paperless/data
+      - paperless-media:/usr/src/paperless/media
+      - paperless-export:/usr/src/paperless/export
+      - ${NAS_DOCUMENTS_PATH:-./data/documents}:/usr/src/paperless/consume
+    environment:
+      - PAPERLESS_REDIS=redis://paperless-redis:6379
+      - PAPERLESS_DBHOST=paperless-db
+      - PAPERLESS_DBPASS=${PAPERLESS_DB_PASSWORD:-changeme}
+      - PAPERLESS_SECRET_KEY=${PAPERLESS_SECRET_KEY:-changeme}
+      - PAPERLESS_ADMIN_USER=${PAPERLESS_ADMIN_USER:-admin}
+      - PAPERLESS_ADMIN_PASSWORD=${PAPERLESS_ADMIN_PASSWORD:-changeme}
+      - PAPERLESS_TIME_ZONE=${TZ:-America/New_York}
+      - PAPERLESS_OCR_LANGUAGE=eng
+    depends_on:
+      paperless-db:
+        condition: service_healthy
+      paperless-redis:
+        condition: service_started
+
+  paperless-redis:
+    image: redis:7-alpine
+    container_name: paperless-redis
+    restart: unless-stopped
+    profiles: [all, productivity, paperless-ngx]
+
+  paperless-db:
+    image: postgres:15-alpine
+    container_name: paperless-db
+    restart: unless-stopped
+    profiles: [all, productivity, paperless-ngx]
+    volumes:
+      - paperless-db-data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=paperless
+      - POSTGRES_PASSWORD=${PAPERLESS_DB_PASSWORD:-changeme}
+      - POSTGRES_DB=paperless
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paperless"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  paperless-data:
+  paperless-media:
+  paperless-export:
+  paperless-db-data:

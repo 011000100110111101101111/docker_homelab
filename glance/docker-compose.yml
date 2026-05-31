@@ -1,0 +1,17 @@
+# ── Glance ───────────────────────────────────────────────────────────────────
+# News, content feeds, and entertainment dashboard. Web UI: http://<host>:8181
+# Config lives in ./glance/glance.yml — edit it directly.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  glance:
+    image: glanceapp/glance:latest
+    container_name: glance
+    restart: unless-stopped
+    profiles: [all, dashboard, glance]
+    ports:
+      - "8181:8080"
+    volumes:
+      - ./glance/glance.yml:/app/glance.yml:ro
+    environment:
+      - TZ=${TZ:-America/New_York}

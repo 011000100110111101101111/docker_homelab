@@ -1,0 +1,27 @@
+---
+# Homepage Settings
+# https://gethomepage.dev/latest/configs/settings/
+
+title: Nexus
+description: Homelab Dashboard
+
+color: slate
+theme: dark
+
+useEqualHeights: true
+
+layout:
+  Media:
+    icon: mdi-play-circle-outline
+  Movies & TV:
+    icon: mdi-movie-open-outline
+  Photos & Documents:
+    icon: mdi-image-multiple-outline
+  Productivity:
+    icon: mdi-briefcase-outline
+  Books:
+    icon: mdi-book-open-variant
+  Infrastructure:
+    icon: mdi-server-network
+  Dev Tools:
+    icon: mdi-code-braces

@@ -1,0 +1,46 @@
+# ── Pastefy ──────────────────────────────────────────────────────────────────
+# Paste / code sharing service. Web UI: http://<host>:4567
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  pastefy:
+    image: interaapps/pastefy:latest
+    container_name: pastefy
+    restart: unless-stopped
+    profiles: [all, dev, pastefy]
+    ports:
+      - "4567:4567"
+    volumes:
+      - pastefy-data:/app/data
+    environment:
+      - TZ=${TZ:-America/New_York}
+      - DB_DRIVER=org.mariadb.jdbc.Driver
+      - DB_URL=jdbc:mariadb://pastefy-db:3306/pastefy
+      - DB_USER=pastefy
+      - DB_PASSWORD=${PASTEFY_DB_PASSWORD:-changeme}
+      - HTTP_PORT=4567
+    depends_on:
+      pastefy-db:
+        condition: service_healthy
+
+  pastefy-db:
+    image: mariadb:11
+    container_name: pastefy-db
+    restart: unless-stopped
+    profiles: [all, dev, pastefy]
+    volumes:
+      - pastefy-db-data:/var/lib/mysql
+    environment:
+      - MARIADB_DATABASE=pastefy
+      - MARIADB_USER=pastefy
+      - MARIADB_PASSWORD=${PASTEFY_DB_PASSWORD:-changeme}
+      - MARIADB_ROOT_PASSWORD=${PASTEFY_DB_PASSWORD:-changeme}
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--su-mysql", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pastefy-data:
+  pastefy-db-data:

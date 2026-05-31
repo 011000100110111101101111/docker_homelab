@@ -1,0 +1,53 @@
+# ── Koel ─────────────────────────────────────────────────────────────────────
+# Music streaming server. Web UI: http://<host>:4533
+# Set NAS_MUSIC_PATH in .env to your music library directory.
+# On first run, log in with admin@example.com and set a new password.
+# Then go to Settings → Music Library to scan your collection.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  koel:
+    image: phanan/koel:latest
+    container_name: koel
+    restart: unless-stopped
+    profiles: [all, media, koel]
+    ports:
+      - "4533:80"
+    volumes:
+      - ${NAS_MUSIC_PATH:-./data/music}:/music:ro
+      - koel-covers:/var/www/html/public/img/covers
+      - koel-search-index:/var/www/html/.search-indexes
+    environment:
+      - DB_CONNECTION=mysql
+      - DB_HOST=koel-db
+      - DB_PORT=3306
+      - DB_DATABASE=koel
+      - DB_USERNAME=koel
+      - DB_PASSWORD=${KOEL_DB_PASSWORD:-changeme}
+      - APP_URL=http://localhost:4533
+    depends_on:
+      koel-db:
+        condition: service_healthy
+
+  koel-db:
+    image: mysql:8
+    container_name: koel-db
+    restart: unless-stopped
+    profiles: [all, media, koel]
+    volumes:
+      - koel-db-data:/var/lib/mysql
+    environment:
+      - MYSQL_DATABASE=koel
+      - MYSQL_USER=koel
+      - MYSQL_PASSWORD=${KOEL_DB_PASSWORD:-changeme}
+      - MYSQL_ROOT_PASSWORD=${KOEL_DB_PASSWORD:-changeme}
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  koel-covers:
+  koel-search-index:
+  koel-db-data:

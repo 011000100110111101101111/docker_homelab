@@ -1,0 +1,23 @@
+/* === Catppuccin Mocha === */
+body { background-color: #1e1e2e !important; }
+
+.service-card { background-color: #313244 !important; border-color: #45475a !important; }
+.service-tag { background-color: #181825 !important; }
+.service-tag p { color: #a6adc8 !important; }
+.service-tag p:first-child { color: #cdd6f4 !important; font-weight: 500 !important; }
+
+.information-widget-base {
+  background-color: #313244 !important;
+  border-color: #45475a !important;
+  color: #cdd6f4 !important;
+}
+
+.service-group-header span,
+h2.service-group-header {
+  color: #b4befe !important;
+  font-size: 0.65rem !important;
+  letter-spacing: 0.12em !important;
+  text-transform: uppercase !important;
+  font-weight: 600 !important;
+  opacity: 1 !important;
+}

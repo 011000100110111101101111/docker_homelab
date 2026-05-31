@@ -1,0 +1,49 @@
+# ── n8n ──────────────────────────────────────────────────────────────────────
+# Workflow automation. Web UI: http://<host>:5678
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    profiles: [all, productivity, n8n]
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n-data:/home/node/.n8n
+    environment:
+      - TZ=${TZ:-America/New_York}
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=n8n-db
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=n8n
+      - DB_POSTGRESDB_USER=n8n
+      - DB_POSTGRESDB_PASSWORD=${N8N_ENCRYPTION_KEY:-changeme}
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-changeme}
+      - N8N_HOST=0.0.0.0
+      - WEBHOOK_URL=http://n8n.${DOMAIN:-localhost}
+    depends_on:
+      n8n-db:
+        condition: service_healthy
+
+  n8n-db:
+    image: postgres:15-alpine
+    container_name: n8n-db
+    restart: unless-stopped
+    profiles: [all, productivity, n8n]
+    volumes:
+      - n8n-db-data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=n8n
+      - POSTGRES_PASSWORD=${N8N_ENCRYPTION_KEY:-changeme}
+      - POSTGRES_DB=n8n
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U n8n"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  n8n-data:
+  n8n-db-data:

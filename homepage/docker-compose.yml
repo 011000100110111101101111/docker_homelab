@@ -1,0 +1,23 @@
+# ── Homepage ─────────────────────────────────────────────────────────────────
+# Service dashboard. Web UI: http://<host>:3001
+# Config files live in ./homepage/config/ — edit them to customize the layout.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  homepage:
+    image: ghcr.io/gethomepage/homepage:latest
+    container_name: homepage
+    restart: unless-stopped
+    profiles: [all, dashboard, homepage]
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./homepage/config:/app/config
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - TZ=${TZ:-America/New_York}
+      - HOMEPAGE_VAR_JELLYFIN=${HOMEPAGE_VAR_JELLYFIN:-}
+      - HOMEPAGE_VAR_JELLYSEER=${HOMEPAGE_VAR_JELLYSEER:-}
+      - HOMEPAGE_VAR_ADGUARD_USERNAME=${HOMEPAGE_VAR_ADGUARD_USERNAME:-admin}
+      - HOMEPAGE_VAR_ADGUARD_PASSWORD=${HOMEPAGE_VAR_ADGUARD_PASSWORD:-changeme}
+      - HOMEPAGE_VAR_PORTAINER_KEY=${HOMEPAGE_VAR_PORTAINER_KEY:-}

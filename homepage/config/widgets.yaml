@@ -1,0 +1,14 @@
+---
+# Homepage Widgets (top info bar)
+# https://gethomepage.dev/latest/widgets/
+
+- search:
+    provider: google
+    target: _blank
+
+- datetime:
+    text_size: xl
+    format:
+      timeStyle: short
+      dateStyle: short
+      hourCycle: h12

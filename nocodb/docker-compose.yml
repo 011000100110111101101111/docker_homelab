@@ -1,0 +1,41 @@
+# ── NocoDB ───────────────────────────────────────────────────────────────────
+# No-code database UI (Airtable alternative). Web UI: http://<host>:8082
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  nocodb:
+    image: nocodb/nocodb:latest
+    container_name: nocodb
+    restart: unless-stopped
+    profiles: [all, dev, nocodb]
+    ports:
+      - "8082:8080"
+    volumes:
+      - nocodb-data:/usr/app/data
+    environment:
+      - TZ=${TZ:-America/New_York}
+      - NC_DB=pg://nocodb-db:5432?u=nocodb&p=${NOCODB_DB_PASSWORD:-changeme}&d=nocodb
+    depends_on:
+      nocodb-db:
+        condition: service_healthy
+
+  nocodb-db:
+    image: postgres:15-alpine
+    container_name: nocodb-db
+    restart: unless-stopped
+    profiles: [all, dev, nocodb]
+    volumes:
+      - nocodb-db-data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=nocodb
+      - POSTGRES_PASSWORD=${NOCODB_DB_PASSWORD:-changeme}
+      - POSTGRES_DB=nocodb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nocodb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  nocodb-data:
+  nocodb-db-data:

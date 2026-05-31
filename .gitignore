@@ -1,0 +1,17 @@
+config.yaml
+dev-inventory.ini
+
+# Secrets — never commit the real .env
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Local data directories (created at runtime if using relative paths)
+data/

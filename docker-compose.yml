@@ -1,0 +1,57 @@
+name: homelab
+
+# ── Portable Homelab Stack ────────────────────────────────────────────────────
+# Requirements: Docker Compose v2.20+ (for include: support)
+#
+# Usage:
+#   python deploy.py          ← interactive deploy tool (recommended)
+#   docker compose --profile all up -d
+#   docker compose --profile media up -d
+#
+# Profiles:
+#   all          → every optional service
+#   media        → Jellyfin, Jellyseer, Koel
+#   photos       → Immich (server + ML + DB)
+#   productivity → Mealie, Paperless-NGX, n8n
+#   dashboard    → Homepage, Glance
+#   books        → Kavita, Calibre-web
+#   dev          → NocoDB, Metabase, Pastefy, Bytestash
+#
+#   Individual service profiles (same as service ID):
+#   jellyfin | jellyseer | koel | immich | mealie | paperless-ngx | n8n |
+#   homepage | glance | kavita | calibre-web | nocodb | metabase | pastefy | bytestash
+#
+# Core services (NPM + AdGuard) start unconditionally — no profile needed.
+# ─────────────────────────────────────────────────────────────────────────────
+
+include:
+  # ── Core (always on) ────────────────────────────────────────────────────────
+  - nginx-proxy-manager/docker-compose.yml
+  - adguard/docker-compose.yml
+
+  # ── Media ───────────────────────────────────────────────────────────────────
+  - jellyfin/docker-compose.yml
+  - jellyseer/docker-compose.yml
+  - koel/docker-compose.yml
+
+  # ── Photos ──────────────────────────────────────────────────────────────────
+  - immich/docker-compose.yml
+
+  # ── Productivity ────────────────────────────────────────────────────────────
+  - mealie/docker-compose.yml
+  - paperless-ngx/docker-compose.yml
+  - n8n/docker-compose.yml
+
+  # ── Dashboards ──────────────────────────────────────────────────────────────
+  - homepage/docker-compose.yml
+  - glance/docker-compose.yml
+
+  # ── Books ───────────────────────────────────────────────────────────────────
+  - kavita/docker-compose.yml
+  - calibre-web/docker-compose.yml
+
+  # ── Dev Tools ───────────────────────────────────────────────────────────────
+  - nocodb/docker-compose.yml
+  - metabase/docker-compose.yml
+  - pastefy/docker-compose.yml
+  - bytestash/docker-compose.yml

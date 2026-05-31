@@ -1,0 +1,26 @@
+---
+# Homepage Bookmarks
+# https://gethomepage.dev/latest/configs/bookmarks/
+
+- Web:
+    - Reddit:
+        - href: https://reddit.com
+          icon: reddit.png
+    - YouTube:
+        - href: https://youtube.com
+          icon: youtube.png
+    - GitHub:
+        - href: https://github.com
+          icon: github.png
+
+- Dev:
+    - NocoDB:
+        - href: http://localhost:8082
+          icon: nocodb.png
+    - Metabase:
+        - href: http://localhost:3002
+          icon: metabase.png
+    - Pastefy:
+        - href: http://localhost:4567
+    - Bytestash:
+        - href: http://localhost:5003

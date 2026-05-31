@@ -1,0 +1,21 @@
+# ── Kavita ───────────────────────────────────────────────────────────────────
+# Book and manga reader. Web UI: http://<host>:5001
+# Set NAS_BOOKS_PATH in .env to your book library directory.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  kavita:
+    image: jvmilazz0/kavita:latest
+    container_name: kavita
+    restart: unless-stopped
+    profiles: [all, books, kavita]
+    ports:
+      - "5001:5000"
+    volumes:
+      - kavita-config:/kavita/config
+      - ${NAS_BOOKS_PATH:-./data/books}:/books
+    environment:
+      - TZ=${TZ:-America/New_York}
+
+volumes:
+  kavita-config:

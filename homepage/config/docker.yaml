@@ -1,0 +1,6 @@
+---
+# Docker socket connection for container status indicators
+# https://gethomepage.dev/latest/configs/docker/
+
+my-docker:
+  socket: /var/run/docker.sock

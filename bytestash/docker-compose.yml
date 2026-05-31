@@ -1,0 +1,20 @@
+# ── Bytestash ────────────────────────────────────────────────────────────────
+# Code snippet manager. Web UI: http://<host>:5003
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  bytestash:
+    image: stonith8/bytestash:latest
+    container_name: bytestash
+    restart: unless-stopped
+    profiles: [all, dev, bytestash]
+    ports:
+      - "5003:5000"
+    volumes:
+      - bytestash-data:/app/data
+    environment:
+      - TZ=${TZ:-America/New_York}
+      - JWT_SECRET=${N8N_ENCRYPTION_KEY:-changeme}
+
+volumes:
+  bytestash-data:
