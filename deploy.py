@@ -147,6 +147,7 @@ ENV_SECTIONS = [
     {
         "name": "AdGuard Home",
         "desc": "DNS & ad blocking credentials",
+        "deploy_only": True,   # asked at deploy time (not in global wizard)
         "vars": [
             {"key": "ADGUARD_USERNAME", "desc": "Admin username", "default": "admin"},
             {"key": "ADGUARD_PASSWORD", "desc": "Admin password", "default": "changeme", "password": True},
@@ -194,50 +195,51 @@ CORE = [
     {"id": "adguard",             "name": "AdGuard Home",         "desc": "DNS & ad blocking",              "port": 3000},
 ]
 
+# forward_host = container name on Docker network; forward_port = internal port NPM proxies to
 CATEGORIES = [
     {
         "id": "media", "name": "Media", "desc": "Streaming and music",
         "services": [
-            {"id": "jellyfin",  "name": "Jellyfin",  "desc": "Media server",    "port": 8096},
-            {"id": "jellyseer", "name": "Jellyseer", "desc": "Media requests",  "port": 5055, "requires": ["jellyfin"]},
-            {"id": "koel",      "name": "Koel",       "desc": "Music streaming", "port": 4533},
+            {"id": "jellyfin",  "name": "Jellyfin",  "desc": "Media server",    "port": 8096, "forward_host": "jellyfin",  "forward_port": 8096},
+            {"id": "jellyseer", "name": "Jellyseer", "desc": "Media requests",  "port": 5055, "forward_host": "jellyseer", "forward_port": 5055, "requires": ["jellyfin"]},
+            {"id": "koel",      "name": "Koel",       "desc": "Music streaming", "port": 4533, "forward_host": "koel",      "forward_port": 80},
         ],
     },
     {
         "id": "photos", "name": "Photos", "desc": "Photo backup and management",
         "services": [
-            {"id": "immich", "name": "Immich", "desc": "Photo management & ML search", "port": 2283},
+            {"id": "immich", "name": "Immich", "desc": "Photo management & ML search", "port": 2283, "forward_host": "immich-server", "forward_port": 2283},
         ],
     },
     {
         "id": "productivity", "name": "Productivity", "desc": "Recipes, documents, and automation",
         "services": [
-            {"id": "mealie",        "name": "Mealie",        "desc": "Recipe manager",       "port": 9000},
-            {"id": "paperless-ngx", "name": "Paperless-NGX", "desc": "Document management",  "port": 8001},
-            {"id": "n8n",           "name": "n8n",           "desc": "Workflow automation",   "port": 5678},
+            {"id": "mealie",        "name": "Mealie",        "desc": "Recipe manager",       "port": 9000, "forward_host": "mealie",        "forward_port": 9000},
+            {"id": "paperless-ngx", "name": "Paperless-NGX", "desc": "Document management",  "port": 8001, "forward_host": "paperless",      "forward_port": 8000},
+            {"id": "n8n",           "name": "n8n",           "desc": "Workflow automation",   "port": 5678, "forward_host": "n8n",            "forward_port": 5678},
         ],
     },
     {
         "id": "dashboard", "name": "Dashboards", "desc": "Service overview and content feeds",
         "services": [
-            {"id": "homepage", "name": "Homepage", "desc": "Service dashboard",       "port": 3001},
-            {"id": "glance",   "name": "Glance",   "desc": "News & content dashboard","port": 8181},
+            {"id": "homepage", "name": "Homepage", "desc": "Service dashboard",        "port": 3001, "forward_host": "homepage", "forward_port": 3000},
+            {"id": "glance",   "name": "Glance",   "desc": "News & content dashboard", "port": 8181, "forward_host": "glance",   "forward_port": 8080},
         ],
     },
     {
         "id": "books", "name": "Books", "desc": "Reading and book management",
         "services": [
-            {"id": "kavita",      "name": "Kavita",      "desc": "Book reader",            "port": 5001},
-            {"id": "calibre-web", "name": "Calibre Web", "desc": "Book library",           "port": 8083},
+            {"id": "kavita",      "name": "Kavita",      "desc": "Book reader",  "port": 5001, "forward_host": "kavita",      "forward_port": 5000},
+            {"id": "calibre-web", "name": "Calibre Web", "desc": "Book library", "port": 8083, "forward_host": "calibre-web", "forward_port": 8083},
         ],
     },
     {
         "id": "dev", "name": "Dev Tools", "desc": "Databases, analytics, and utilities",
         "services": [
-            {"id": "nocodb",    "name": "NocoDB",    "desc": "No-code database UI",   "port": 8082},
-            {"id": "metabase",  "name": "Metabase",  "desc": "Analytics & BI",        "port": 3002},
-            {"id": "pastefy",   "name": "Pastefy",   "desc": "Paste service",          "port": 4567},
-            {"id": "bytestash", "name": "Bytestash", "desc": "Code snippet manager",   "port": 5003},
+            {"id": "nocodb",    "name": "NocoDB",    "desc": "No-code database UI",  "port": 8082, "forward_host": "nocodb",    "forward_port": 8080},
+            {"id": "metabase",  "name": "Metabase",  "desc": "Analytics & BI",       "port": 3002, "forward_host": "metabase",  "forward_port": 3000},
+            {"id": "pastefy",   "name": "Pastefy",   "desc": "Paste service",         "port": 4567, "forward_host": "pastefy",   "forward_port": 4567},
+            {"id": "bytestash", "name": "Bytestash", "desc": "Code snippet manager",  "port": 5003, "forward_host": "bytestash", "forward_port": 5000},
         ],
     },
 ]
@@ -966,39 +968,37 @@ def wizard_domain(existing):
     ).ask()
 
     if access is None:
-        return existing.get("DOMAIN", "localhost")
+        return {"DOMAIN": existing.get("DOMAIN", "localhost"), "DOMAIN_MODE": existing.get("DOMAIN_MODE", "local")}
 
     if access == "local":
         print(f"\n  {GREEN}✓ No extra setup needed.{RESET}")
         print(f"  {SUBTEXT}Access services directly at http://localhost:<port>{RESET}\n")
-        return "localhost"
+        return {"DOMAIN": "localhost", "DOMAIN_MODE": "local"}
 
     elif access == "lan":
         print(f"\n  {BLUE}What you'll need:{RESET}")
         print(f"  {SUBTEXT}  1. A local domain name  (e.g. homelab.local){RESET}")
-        print(f"  {SUBTEXT}  2. A DNS entry pointing it to this machine's IP{RESET}")
-        print(f"  {SUBTEXT}     → AdGuard Home (in this stack) can handle this:{RESET}")
-        print(f"  {SUBTEXT}       Settings → DNS rewrites → *.homelab.local → <your-IP>{RESET}\n")
+        print(f"  {SUBTEXT}  2. The deploy tool can configure AdGuard + Nginx automatically{RESET}")
+        print(f"  {SUBTEXT}     after deploy — and tell you the one router setting to change.{RESET}\n")
         domain = questionary.text(
             "  Local domain:",
             default=existing.get("DOMAIN", "homelab.local"),
             style=MOCHA,
         ).ask()
-        return domain or "homelab.local"
+        return {"DOMAIN": domain or "homelab.local", "DOMAIN_MODE": "lan"}
 
     else:  # public
         print(f"\n  {BLUE}What you'll need:{RESET}")
-        print(f"  {SUBTEXT}  1. A registered domain  (Cloudflare, Namecheap, etc.){RESET}")
-        print(f"  {SUBTEXT}  2. An A record pointing to your public IP address{RESET}")
+        print(f"  {SUBTEXT}  1. A registered domain on Cloudflare{RESET}")
+        print(f"  {SUBTEXT}  2. A Cloudflare API token (for DNS challenge SSL certs){RESET}")
         print(f"  {SUBTEXT}  3. Ports 80 and 443 forwarded to this machine{RESET}")
-        print(f"  {SUBTEXT}  4. SSL certificates — Nginx Proxy Manager handles this{RESET}")
-        print(f"  {SUBTEXT}     automatically via Let's Encrypt once configured.{RESET}\n")
+        print(f"  {SUBTEXT}  The deploy tool will configure Nginx + request certs automatically.{RESET}\n")
         domain = questionary.text(
             "  Public domain:",
             default=existing.get("DOMAIN", "example.com"),
             style=MOCHA,
         ).ask()
-        return domain or "example.com"
+        return {"DOMAIN": domain or "example.com", "DOMAIN_MODE": "public"}
 
 # ── Wizard: NAS / Storage ─────────────────────────────────────────────────────
 
@@ -1204,6 +1204,296 @@ def wizard_nas(existing):
 
     return {"NAS_IP": nas_ip, **paths}
 
+# ── Routing helpers (NPM + AdGuard APIs) ─────────────────────────────────────
+
+import urllib.request as _urlreq
+import urllib.error   as _urlerr
+import json           as _json
+
+def _get_host_ip(target="8.8.8.8"):
+    """Detect the outbound IP of this machine without making a real connection."""
+    try:
+        s = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        s.connect((target, 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+def _http(method, url, data=None, headers=None, timeout=10):
+    """Minimal HTTP helper using stdlib only."""
+    h = {"Content-Type": "application/json", **(headers or {})}
+    body = _json.dumps(data).encode() if data is not None else None
+    req  = _urlreq.Request(url, data=body, headers=h, method=method)
+    try:
+        with _urlreq.urlopen(req, timeout=timeout) as r:
+            return r.status, _json.loads(r.read().decode())
+    except _urlerr.HTTPError as e:
+        return e.code, {}
+    except Exception:
+        return 0, {}
+
+def _wait_for_http(url, timeout=90):
+    """Poll url until it returns any HTTP response (or timeout)."""
+    import time as _t
+    deadline = _t.time() + timeout
+    while _t.time() < deadline:
+        try:
+            _urlreq.urlopen(url, timeout=3)
+            return True
+        except _urlerr.HTTPError:
+            return True   # got a response, service is up
+        except Exception:
+            _t.sleep(2)
+    return False
+
+def _npm_login(npm_url, email, password):
+    """Login to NPM and return a Bearer token, or None on failure."""
+    status, body = _http("POST", f"{npm_url}/api/tokens",
+                         {"identity": email, "secret": password})
+    return body.get("token") if status == 200 else None
+
+def _npm_list_proxy_hosts(npm_url, token):
+    """Return list of existing proxy host domain_names."""
+    _, body = _http("GET", f"{npm_url}/api/nginx/proxy-hosts",
+                    headers={"Authorization": f"Bearer {token}"})
+    domains = set()
+    if isinstance(body, list):
+        for h in body:
+            for d in h.get("domain_names", []):
+                domains.add(d)
+    return domains
+
+def _npm_create_proxy_host(npm_url, token, domain_name, forward_host, forward_port, cert_id=0):
+    """Create a proxy host in NPM. Returns True on success."""
+    data = {
+        "domain_names":     [domain_name],
+        "forward_scheme":   "http",
+        "forward_host":     forward_host,
+        "forward_port":     forward_port,
+        "ssl_forced":       cert_id > 0,
+        "certificate_id":   cert_id,
+        "caching_enabled":  False,
+        "block_exploits":   True,
+        "allow_websocket_upgrade": True,
+        "http2_support":    cert_id > 0,
+    }
+    status, _ = _http("POST", f"{npm_url}/api/nginx/proxy-hosts",
+                      data, headers={"Authorization": f"Bearer {token}"})
+    return status in (200, 201)
+
+def _npm_request_certificate(npm_url, token, domain, email, cf_token):
+    """
+    Request a wildcard Let's Encrypt cert via Cloudflare DNS challenge.
+    Returns cert_id on success, 0 on failure.
+    """
+    import time as _t
+    data = {
+        "provider":     "letsencrypt",
+        "domain_names": [f"*.{domain}", domain],
+        "meta": {
+            "letsencrypt_agree": True,
+            "letsencrypt_email": email,
+            "dns_challenge":     True,
+            "dns_challenge_provider": "cloudflare",
+            "dns_challenge_provider_credentials":
+                f"CF_DNS_API_TOKEN={cf_token}",
+        },
+    }
+    status, body = _http("POST", f"{npm_url}/api/nginx/certificates",
+                         data, headers={"Authorization": f"Bearer {token}"},
+                         timeout=180)
+    if status not in (200, 201):
+        return 0
+    cert_id = body.get("id", 0)
+    # Poll until issued (DNS propagation can take up to 2 min)
+    for _ in range(30):
+        _t.sleep(5)
+        _, cb = _http("GET", f"{npm_url}/api/nginx/certificates/{cert_id}",
+                      headers={"Authorization": f"Bearer {token}"})
+        if cb.get("meta", {}).get("letsencrypt_certificate"):
+            return cert_id
+    return cert_id   # return id even if polling timed out; cert may still be issuing
+
+def _adguard_add_rewrite(adguard_url, username, password, domain, answer):
+    """Add a DNS rewrite in AdGuard Home. Returns True on success."""
+    import base64 as _b64
+    creds   = _b64.b64encode(f"{username}:{password}".encode()).decode()
+    status, _ = _http("POST", f"{adguard_url}/control/rewrite/add",
+                      {"domain": domain, "answer": answer},
+                      headers={"Authorization": f"Basic {creds}"})
+    return status in (200, 201)
+
+def _adguard_list_rewrites(adguard_url, username, password):
+    """Return set of domain names already in AdGuard rewrites."""
+    import base64 as _b64
+    creds = _b64.b64encode(f"{username}:{password}".encode()).decode()
+    _, body = _http("GET", f"{adguard_url}/control/rewrite/list",
+                    headers={"Authorization": f"Basic {creds}"})
+    if isinstance(body, list):
+        return {r.get("domain") for r in body}
+    return set()
+
+def _write_hosts_entries(entries):
+    """
+    Append entries to /etc/hosts (Linux/Mac) or Windows hosts file.
+    Requires appropriate permissions.
+    """
+    hosts_path = (r"C:\Windows\System32\drivers\etc\hosts"
+                  if os.name == "nt" else "/etc/hosts")
+    marker = "# homelab-deploy"
+    try:
+        with open(hosts_path, "r") as f:
+            existing = f.read()
+        # Remove old homelab-deploy block
+        lines = [l for l in existing.splitlines()
+                 if not l.strip().endswith(marker)]
+        lines += [""] + [f"{ip}  {domain}  {marker}" for domain, ip in entries]
+        with open(hosts_path, "w") as f:
+            f.write("\n".join(lines) + "\n")
+        return True
+    except PermissionError:
+        return False
+    except Exception:
+        return False
+
+def configure_routing(selected_ids):
+    """
+    Configure Nginx Proxy Manager and AdGuard Home based on DOMAIN_MODE:
+      lan    → AdGuard DNS rewrites + NPM proxy hosts (no SSL)
+      public → NPM wildcard cert via Cloudflare + NPM proxy hosts with SSL
+    """
+    env         = load_env()
+    domain      = env.get("DOMAIN", "localhost")
+    mode        = env.get("DOMAIN_MODE", "local")
+    npm_email   = env.get("NPM_ADMIN_EMAIL",    "admin@example.com")
+    npm_pass    = env.get("NPM_ADMIN_PASSWORD",  "changeme")
+    ag_user     = env.get("ADGUARD_USERNAME",    "admin")
+    ag_pass     = env.get("ADGUARD_PASSWORD",    "changeme")
+    cf_email    = env.get("CF_EMAIL",            "")
+    cf_token    = env.get("CF_API_TOKEN",        "")
+
+    if mode == "local":
+        print(f"\n  {YELLOW}Domain mode is 'local' (localhost) — no routing to configure.{RESET}")
+        print(f"  {SUBTEXT}Re-run setup and choose LAN or Public domain first.{RESET}\n")
+        return
+
+    npm_url     = "http://localhost:81"
+    adguard_url = "http://localhost:3000"
+    host_ip     = _get_host_ip()
+
+    # Build list of services to route
+    all_svcs = {s["id"]: s for s in all_optional_services()}
+    to_route = []
+    for svc_id in selected_ids:
+        svc = all_svcs.get(svc_id)
+        if svc and svc.get("forward_host") and svc.get("forward_port"):
+            subdomain = f"{svc_id}.{domain}"
+            to_route.append((subdomain, svc["forward_host"], svc["forward_port"], svc["name"]))
+
+    if not to_route:
+        print(f"\n  {YELLOW}⚠  No routable services in selection.{RESET}\n")
+        return
+
+    print(f"\n  {BLUE}◆ Configuring routing for {len(to_route)} services{RESET}\n")
+
+    # ── Wait for NPM ──────────────────────────────────────────────────────────
+    print(f"  {SUBTEXT}Waiting for Nginx Proxy Manager...{RESET}", end="", flush=True)
+    if not _wait_for_http(f"{npm_url}/api/"):
+        print(f"\r  {RED}✗  NPM not reachable at {npm_url} — is it running?{RESET}\n")
+        return
+    print(f"\r  {GREEN}✓  Nginx Proxy Manager ready{RESET}          ")
+
+    # ── Login to NPM ──────────────────────────────────────────────────────────
+    token = _npm_login(npm_url, npm_email, npm_pass)
+    if not token:
+        print(f"  {RED}✗  NPM login failed — check NPM_ADMIN_EMAIL / NPM_ADMIN_PASSWORD in .env{RESET}\n")
+        return
+    existing_hosts = _npm_list_proxy_hosts(npm_url, token)
+
+    # ── Cloudflare SSL cert ───────────────────────────────────────────────────
+    cert_id = 0
+    if mode == "public":
+        if not cf_token or not cf_email:
+            print(f"  {YELLOW}⚠  CF_EMAIL or CF_API_TOKEN missing — skipping SSL cert.{RESET}")
+            print(f"  {SUBTEXT}   Add them via Reconfigure .env and re-run Configure routing.{RESET}\n")
+        else:
+            print(f"  {SUBTEXT}Requesting wildcard SSL cert for *.{domain} via Cloudflare DNS...{RESET}")
+            print(f"  {SUBTEXT}(This can take up to 2 minutes for DNS propagation){RESET}")
+            cert_id = _npm_request_certificate(npm_url, token, domain, cf_email, cf_token)
+            if cert_id:
+                print(f"  {GREEN}✓  SSL certificate issued (id={cert_id}){RESET}\n")
+            else:
+                print(f"  {YELLOW}⚠  Certificate request may still be processing — check NPM UI.{RESET}\n")
+
+    # ── AdGuard DNS rewrites (LAN only) ───────────────────────────────────────
+    if mode == "lan":
+        print(f"  {SUBTEXT}Waiting for AdGuard Home...{RESET}", end="", flush=True)
+        if not _wait_for_http(f"{adguard_url}/control/status"):
+            print(f"\r  {YELLOW}⚠  AdGuard not reachable — skipping DNS rewrites{RESET}")
+        else:
+            print(f"\r  {GREEN}✓  AdGuard Home ready{RESET}                    ")
+            existing_rewrites = _adguard_list_rewrites(adguard_url, ag_user, ag_pass)
+            # Wildcard rewrite: *.domain → host_ip
+            wildcard = f"*.{domain}"
+            if wildcard not in existing_rewrites:
+                ok = _adguard_add_rewrite(adguard_url, ag_user, ag_pass, wildcard, host_ip)
+                status_sym = f"{GREEN}✓{RESET}" if ok else f"{YELLOW}⚠{RESET}"
+                print(f"  {status_sym}  DNS rewrite: {wildcard} → {host_ip}")
+            else:
+                print(f"  {SUBTEXT}   DNS rewrite {wildcard} already exists{RESET}")
+        print()
+
+    # ── NPM proxy hosts ───────────────────────────────────────────────────────
+    print(f"  {SUBTEXT}Creating proxy hosts in NPM...{RESET}\n")
+    created, skipped, failed = [], [], []
+    for subdomain, fwd_host, fwd_port, svc_name in to_route:
+        if subdomain in existing_hosts:
+            skipped.append(subdomain)
+            print(f"  {SUBTEXT}  skip   {subdomain} (already exists){RESET}")
+            continue
+        ok = _npm_create_proxy_host(npm_url, token, subdomain, fwd_host, fwd_port, cert_id)
+        if ok:
+            created.append(subdomain)
+            print(f"  {GREEN}✓{RESET}  {subdomain}")
+        else:
+            failed.append(subdomain)
+            print(f"  {RED}✗{RESET}  {subdomain} — failed, check NPM logs")
+
+    print()
+
+    # ── /etc/hosts offer (LAN only) ───────────────────────────────────────────
+    if mode == "lan" and (created or skipped):
+        all_domains = [(sd, host_ip) for sd, _, _, _ in to_route]
+        offer = questionary.select(
+            "  Add entries to /etc/hosts for this machine?",
+            choices=[
+                Choice("Yes — works on this machine immediately", value=True),
+                Choice("No  — I'll use AdGuard / router DNS",    value=False),
+            ],
+            style=MOCHA,
+        ).ask()
+        if offer:
+            ok = _write_hosts_entries(all_domains)
+            if ok:
+                print(f"\n  {GREEN}✓  /etc/hosts updated.{RESET}")
+            else:
+                print(f"\n  {YELLOW}⚠  Could not write /etc/hosts (try sudo python3 deploy.py).{RESET}")
+        print()
+
+    # ── Summary / remaining steps ─────────────────────────────────────────────
+    if mode == "lan":
+        print(f"  {BLUE}◆ To access these on your whole network:{RESET}\n")
+        print(f"  {TEXT}  Point your router's DNS server to this machine: {YELLOW}{host_ip}{RESET}")
+        print(f"  {SUBTEXT}  (Usually: Router → LAN / DHCP → DNS Server → {host_ip}){RESET}\n")
+        print(f"  {SUBTEXT}  AdGuard will then resolve *.{domain} for every device.{RESET}\n")
+    else:  # public
+        print(f"  {BLUE}◆ Remaining manual steps:{RESET}\n")
+        print(f"  {TEXT}  1.{RESET} {SUBTEXT}Add an A record in Cloudflare:{RESET}")
+        print(f"         {TEXT}*.{domain}{RESET}  →  {YELLOW}<your public IP>{RESET}")
+        print(f"  {TEXT}  2.{RESET} {SUBTEXT}Forward ports 80 and 443 on your router to {YELLOW}{host_ip}{RESET}\n")
+
 def _write_immich_gpu_override(suffix):
     """
     Write (or remove) immich/docker-compose.override.yml with the GPU
@@ -1283,23 +1573,21 @@ def run_setup(existing=None):
         return None
     values.update(result)
 
-    domain = wizard_domain(existing)
-    if domain is None:
+    domain_result = wizard_domain(existing)
+    if domain_result is None:
         return None
-    values["DOMAIN"] = domain
+    values.update(domain_result)
 
     nas = wizard_nas(existing)
     if nas is None:
         return None
     values.update(nas)
 
-    immich = wizard_immich(existing)
-    if immich is None:
-        return None
-    values.update(immich)
-
-    # Generic sections: AdGuard, Passwords, Homepage API keys
+    # Generic sections: Passwords, Homepage API keys
+    # (AdGuard and Immich GPU are asked at deploy time — see configure_selected_services)
     for section in ENV_SECTIONS:
+        if section.get("deploy_only"):
+            continue
         section_header(section["name"], section.get("desc"))
 
         if section.get("optional"):
@@ -1616,6 +1904,76 @@ def select_individually():
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+def configure_selected_services(selected_ids):
+    """
+    Ask service-specific questions based on what's being deployed.
+    Always covers AdGuard (core). Covers Immich GPU only if immich is selected.
+    Saves any changes back to .env immediately.
+    """
+    existing = load_env()
+    updated  = {}
+
+    # ── AdGuard (always core) ─────────────────────────────────────────────────
+    adguard_section = next(s for s in ENV_SECTIONS if s["name"] == "AdGuard Home")
+    section_header("AdGuard Home", adguard_section["desc"])
+    for var in adguard_section["vars"]:
+        current = existing.get(var["key"], var["default"])
+        display  = "****" if (var.get("password") and current not in ("", "changeme")) else current
+        prompt   = f"  {var['desc']}"
+        if display:
+            prompt += f" [{display}]"
+        answer = questionary.text(prompt, default=current, style=MOCHA).ask()
+        if answer is None:
+            return False
+        updated[var["key"]] = answer.strip() or current
+    print()
+
+    # ── Immich (only if selected) ─────────────────────────────────────────────
+    if "immich" in selected_ids:
+        result = wizard_immich(existing)
+        if result is None:
+            return False
+        updated.update(result)
+
+    # ── Nginx Proxy Manager admin credentials ─────────────────────────────────
+    section_header("Nginx Proxy Manager", "Admin credentials for the proxy UI and routing API")
+    for key, desc, default, pw in [
+        ("NPM_ADMIN_EMAIL",    "Admin email",    "admin@example.com", False),
+        ("NPM_ADMIN_PASSWORD", "Admin password", "changeme",          True),
+    ]:
+        current = existing.get(key, default)
+        display  = "****" if (pw and current not in ("", "changeme")) else current
+        answer   = questionary.text(
+            f"  {desc} [{display}]:", default=current, style=MOCHA,
+        ).ask()
+        if answer is None:
+            return False
+        updated[key] = answer.strip() or current
+    print()
+
+    # ── Cloudflare credentials (public domain only) ───────────────────────────
+    if existing.get("DOMAIN_MODE") == "public":
+        section_header("Cloudflare", "Required for automatic SSL certificates via DNS challenge")
+        for key, desc, default in [
+            ("CF_EMAIL",     "Cloudflare account email", ""),
+            ("CF_API_TOKEN", "Cloudflare API token",     ""),
+        ]:
+            current = existing.get(key, default)
+            display  = "****" if current and key == "CF_API_TOKEN" else current
+            answer   = questionary.text(
+                f"  {desc} [{display}]:" if display else f"  {desc}:",
+                default=current, style=MOCHA,
+            ).ask()
+            if answer is None:
+                return False
+            updated[key] = answer.strip() or current
+        print()
+
+    # Save anything that changed
+    merged = {**existing, **updated}
+    save_env(merged)
+    return True
+
 def main():
     if not os.path.exists(ENV_FILE):
         ok = setup_first_run()
@@ -1640,6 +1998,7 @@ def main():
             Choice("Core only          — proxy + DNS only",              value="core"),
             Separator(),
             Choice("List images        — show all Docker images in use", value="images"),
+            Choice("Configure routing  — set up NPM proxy hosts + DNS",  value="routing"),
             Choice("Reconfigure .env   — re-run setup wizard",           value="reconfigure"),
         ],
         style=MOCHA,
@@ -1662,6 +2021,12 @@ def main():
         main()
         return
 
+    if mode == "routing":
+        # Re-run routing against whatever is currently deployed (all services)
+        all_ids = {svc["id"] for svc in all_optional_services()}
+        configure_routing(all_ids)
+        return
+
     selected_ids, profiles = set(), []
 
     if mode == "all":
@@ -1678,6 +2043,9 @@ def main():
         if profiles is None:
             return
 
+    if not configure_selected_services(selected_ids):
+        return
+
     print_summary(selected_ids, profiles)
 
     confirm = questionary.confirm("Deploy now?", default=True, style=MOCHA).ask()
@@ -1689,6 +2057,14 @@ def main():
         if result.returncode == 0:
             print(f"\n  {GREEN}✓ Done.{RESET}")
             print_access_urls(selected_ids)
+            env = load_env()
+            if env.get("DOMAIN_MODE", "local") != "local":
+                do_routing = questionary.confirm(
+                    "Configure routing now? (NPM proxy hosts + DNS)",
+                    default=True, style=MOCHA,
+                ).ask()
+                if do_routing:
+                    configure_routing(selected_ids)
         else:
             print(f"\n  {RED}✗ Something went wrong. Check the output above.{RESET}\n")
     else:
