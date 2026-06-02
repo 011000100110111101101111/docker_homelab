@@ -2,27 +2,30 @@
 # Photo management with AI search and face recognition.
 # Web UI: http://<host>:2283
 #
-# Machine Learning: runs locally with NVIDIA GPU (CUDA image).
-# Requires NVIDIA Container Toolkit + Docker Desktop GPU support on Windows.
-# To use a remote ML server instead, comment out immich-machine-learning and
-# set IMMICH_MACHINE_LEARNING_URL in immich-server's environment.
+# Set NAS_PHOTOS_PATH in .env to your NAS photo library (mounted read-only as
+# an external library). Uploads go to ./library by default.
 #
-# Set NAS_PHOTOS_PATH in .env to your photo library directory.
+# For GPU-accelerated ML, change the machine-learning image tag to:
+#   ${IMMICH_VERSION:-release}-cuda    (NVIDIA)
+#   ${IMMICH_VERSION:-release}-armnn   (ARM Mali)
+#   ${IMMICH_VERSION:-release}-rocm    (AMD)
+#   ${IMMICH_VERSION:-release}-openvino (Intel)
+# and uncomment the hwaccel extends block — see https://docs.immich.app/features/ml-hardware-acceleration
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
   immich-server:
-    image: ghcr.io/immich-app/immich-server:release
+    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-release}
     container_name: immich-server
-    restart: unless-stopped
+    restart: always
     profiles: [all, photos, immich]
     ports:
       - "2283:2283"
     volumes:
-      - immich-uploads:/usr/src/app/upload
+      - ${IMMICH_UPLOAD_LOCATION:-./library}:/usr/src/app/upload
       - ${NAS_PHOTOS_PATH:-./data/photos}:/usr/src/app/upload/library:ro
+      - /etc/localtime:/etc/localtime:ro
     environment:
-      - TZ=${TZ:-America/New_York}
       - DB_HOSTNAME=immich-db
       - DB_PORT=5432
       - DB_DATABASE_NAME=${IMMICH_DB_NAME:-immich}
@@ -34,44 +37,46 @@ services:
       immich-db:
         condition: service_healthy
       immich-redis:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      disable: false
 
   immich-machine-learning:
-    # GPU (CUDA) — comment this image and uncomment the CPU one below if no GPU
-    image: ghcr.io/immich-app/immich-machine-learning:release-cuda
-    # image: ghcr.io/immich-app/immich-machine-learning:release
+    # IMMICH_ML_TAG_SUFFIX controls the accelerator:
+    #   (empty) = CPU   |  -cuda = NVIDIA  |  -armnn = ARM  |  -rocm = AMD  |  -openvino = Intel
+    # For NVIDIA, also see immich/docker-compose.override.yml (written by deploy.py wizard)
+    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-release}${IMMICH_ML_TAG_SUFFIX:-}
     container_name: immich-machine-learning
-    restart: unless-stopped
+    restart: always
     profiles: [all, photos, immich]
     volumes:
       - immich-ml-cache:/cache
     environment:
       - TZ=${TZ:-America/New_York}
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+    healthcheck:
+      disable: false
 
   immich-redis:
-    image: redis:7-alpine
+    image: docker.io/valkey/valkey:9@sha256:3b55fbaa0cd93cf0d9d961f405e4dfcc70efe325e2d84da207a0a8e6d8fde4f9
     container_name: immich-redis
-    restart: unless-stopped
+    restart: always
     profiles: [all, photos, immich]
+    healthcheck:
+      test: redis-cli ping || exit 1
 
   immich-db:
-    image: tensorchord/pgvecto-rs:pg14-v0.2.0-alpha.0
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
     container_name: immich-db
-    restart: unless-stopped
+    restart: always
     profiles: [all, photos, immich]
+    shm_size: 128mb
     volumes:
       - immich-db-data:/var/lib/postgresql/data
     environment:
       - POSTGRES_DB=${IMMICH_DB_NAME:-immich}
       - POSTGRES_USER=${IMMICH_DB_USERNAME:-immich}
       - POSTGRES_PASSWORD=${IMMICH_DB_PASSWORD:-changeme}
+      - POSTGRES_INITDB_ARGS=--data-checksums
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -d ${IMMICH_DB_NAME:-immich} -U ${IMMICH_DB_USERNAME:-immich}"]
       interval: 10s
@@ -79,6 +84,5 @@ services:
       retries: 5
 
 volumes:
-  immich-uploads:
   immich-ml-cache:
   immich-db-data:

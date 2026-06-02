@@ -5,6 +5,7 @@
 services:
   pastefy:
     image: interaapps/pastefy:latest
+    platform: linux/amd64   # no arm64 image published upstream
     container_name: pastefy
     restart: unless-stopped
     profiles: [all, dev, pastefy]
